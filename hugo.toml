@@ -1,0 +1,44 @@
+baseURL = "https://czinda.io/"
+languageCode = "en-us"
+title = "Chris Zinda"
+theme = "PaperMod"
+
+enableRobotsTXT = true
+buildDrafts = false
+buildFuture = false
+buildExpired = false
+
+[params]
+  author = "Czinda"
+  description = "Personal blog and thoughts on PKI, identity management, and security"
+  showReadingTime = true
+  showShareButtons = false
+  showPostNavLinks = true
+  showBreadCrumbs = true
+  showCodeCopyButtons = true
+  defaultTheme = "auto"
+  
+  [params.homeInfoParams]
+    Title = "Hey, I'm Czinda"
+    Content = "Senior Technical Product Manager focused on PKI, identity management, and enterprise security."
+
+  [[params.socialIcons]]
+    name = "github"
+    url = "https://github.com/czinda"
+  
+  [[params.socialIcons]]
+    name = "linkedin"
+    url = "https://linkedin.com/in/czinda"
+
+[menu]
+  [[menu.main]]
+    identifier = "blog"
+    name = "Blog"
+    url = "/posts/"
+    weight = 10
+  
+  [[menu.main]]
+    identifier = "about"
+    name = "About"
+    url = "/about/"
+    weight = 20
