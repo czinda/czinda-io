@@ -31,11 +31,6 @@ Prior to Red Hat, I worked on PKI initiatives for the Department of Defense, ens
 - PMC Level I
 - The Effective Product Owner
 
-## Education
-
-- **Shippensburg University of Pennsylvania** - Management Information Systems
-- **Berks Technical Institute** - Associates, Specialized Science
-
 ## Connect
 
 - [GitHub](https://github.com/czinda)
