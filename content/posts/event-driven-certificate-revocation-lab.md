@@ -77,27 +77,41 @@ The magic happens in the EDA rulebook. Here's the simplified flow:
 
 ```yaml
 # ansible/rulebooks/security-events.yml
-- name: Certificate Revocation on Security Events
+- name: Security Event Processor
   hosts: all
   sources:
     - ansible.eda.kafka:
-        host: kafka
+        host: kafka.cert-lab.local
         port: 9092
         topic: security-events
 
   rules:
-    - name: Revoke certificate on malware detection
-      condition: event.severity in ["high", "critical"]
+    - name: Credential Theft - Revoke Certificate (RSA)
+      condition: >
+        event.event_type == "credential_theft" and
+        event.severity in ["high", "critical"] and
+        (event.pki_type is not defined or event.pki_type == "rsa")
       action:
         run_playbook:
-          name: playbooks/revoke-certificate.yml
+          name: playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
-            certificate_cn: "{{ event.certificate_cn }}"
-            pki_type: "{{ event.pki_type | default('rsa') }}"
-            reason: "keyCompromise"
+            event: "{{ event }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    - name: IoT Device Cloning - Revoke Certificate (ECC)
+      condition: >
+        event.event_type == "device_cloning" and
+        event.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event }}"
+            ca_level: "iot"
 ```
 
-When Kafka receives a security event, EDA evaluates the conditions and triggers the appropriate playbook. The revocation playbook:
+The rulebook routes events to PKI-specific playbooks based on `pki_type` (rsa/ecc/pqc) and event type. The revocation playbook:
 
 1. Authenticates to the correct Dogtag CA (RSA, ECC, or PQ)
 2. Finds the certificate by common name
