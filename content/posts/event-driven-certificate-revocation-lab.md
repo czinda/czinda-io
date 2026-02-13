@@ -309,4 +309,4 @@ The code is open source and contributions are welcome: [github.com/czinda/cert-r
 
 ---
 
-*This post is part of a series on PKI modernization and identity-driven security automation. Next up: deep dives into Dogtag PKI configuration with Ansible and FreeIPA-integrated certificate profiles for IoT device enrollment.*
+*This post is part of a series on PKI modernization and identity-driven security automation. Next up: [configuring Dogtag PKI certificate profiles for IoT device enrollment with Ansible](/posts/dogtag-pki-iot-profiles-ansible/).*
