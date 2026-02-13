@@ -36,3 +36,4 @@ GitHub Actions workflow (`.github/workflows/hugo.yaml`) automatically builds and
 - Posts with `draft = true` in frontmatter are excluded from production builds
 - New posts created via `hugo new` are drafts by default
 - Use `hugo server -D` to preview drafts locally
+- When authoring articles, use the author name "Chris", not "czinda"
