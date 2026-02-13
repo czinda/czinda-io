@@ -176,17 +176,35 @@ IoT is where event-driven certificate lifecycle management has the most impact. 
 
 ### IoT Lifecycle Scenarios
 
-**Device Provisioning**: When a new sensor is registered in FreeIPA, an Ansible playbook requests an ECC certificate from the IoT Sub-CA, pushes it to the device, and configures mutual TLS.
+**Device Provisioning via EST**: IoT and OT devices don't enroll through the same workflows as users. They use the Enrollment over Secure Transport (EST) protocol (RFC 7030), which allows devices to automatically request, renew, and re-key certificates over HTTPS. A device boots up, authenticates with a manufacturer-installed credential or bootstrap certificate, and enrolls for a production ECC certificate from the IoT Sub-CA — no human in the loop.
 
-**Firmware Anomaly**: An EDR agent or network monitor detects the device behaving unexpectedly. An event is published. EDA revokes the device's certificate within seconds, immediately cutting off its access to backend APIs.
+Dogtag PKI and Red Hat Certificate System (RHCS) fully support EST as a native enrollment protocol. This is an important distinction: FreeIPA and IdM are identity management platforms, not enterprise PKI platforms. They handle user and host identity well, but for protocol-level enrollment like EST and ACME, you need the full Dogtag/RHCS stack. RHCS provides the certificate profiles, enrollment policies, and protocol endpoints that IoT and OT environments require.
 
-**Fleet Rotation**: A scheduled Ansible playbook renews certificates across an entire device fleet before expiration. No manual tracking of expiry dates. No spreadsheets.
+**Firmware Anomaly**: An EDR agent or network monitor detects the device behaving unexpectedly. An event is published. EDA revokes the device's certificate within seconds, immediately cutting off its access to backend APIs. The device can re-enroll via EST once remediated.
 
-**Device Decommissioning**: When a device is removed from the FreeIPA inventory, its certificate is revoked and added to the CRL automatically.
+**Fleet Rotation**: A scheduled Ansible playbook triggers certificate renewal across an entire device fleet before expiration. For EST-capable devices, this can also be handled by the devices themselves — EST supports re-enrollment natively, so devices can renew their own certificates without Ansible needing to push to each endpoint.
+
+**Device Decommissioning**: When a device is removed from inventory, its certificate is revoked and added to the CRL automatically.
+
+## Automated Enrollment for Web and Application Servers
+
+IoT devices are not the only systems that benefit from automated enrollment. Web servers and application servers have the same problem — certificates expire, and someone has to renew them. The ACME protocol (RFC 8555), originally developed by Let's Encrypt, solves this for public-facing services. But enterprises need the same automation for internal services.
+
+Dogtag PKI and RHCS support ACME as a built-in enrollment protocol. This means internal web servers, API gateways, load balancers, and application servers can automatically request and renew certificates from your enterprise CA using the same ACME clients (certbot, acme.sh, cert-manager) that teams already use for public certificates.
+
+The combination looks like this:
+
+| Protocol | Target Systems               | Enrollment Model          |
+|----------|------------------------------|---------------------------|
+| **EST**  | IoT sensors, OT controllers, embedded devices | Device-initiated, mutual TLS bootstrap |
+| **ACME** | Web servers, API gateways, application servers | Server-initiated, HTTP/DNS challenge   |
+| **CMP**  | Network infrastructure, legacy systems         | Router/switch initiated                |
+
+Each protocol serves a different class of identity, but all feed into the same Dogtag/RHCS CA hierarchy. And all of them produce certificates that are subject to the same event-driven revocation workflow — when a security event fires, EDA revokes the certificate regardless of how it was enrolled.
 
 ## Applying This to Users
 
-The same model works for user certificate lifecycle:
+The same event-driven model works for user certificate lifecycle, though the enrollment path is different. Users typically get certificates through FreeIPA/IdM or direct Dogtag enrollment rather than automated protocols:
 
 **Employee Onboarding**: HR system triggers provisioning. FreeIPA creates the identity. Ansible requests an RSA client certificate and configures the user's workstation for certificate-based authentication.
 
