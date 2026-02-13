@@ -65,10 +65,10 @@ The key insight: **Ansible already manages infrastructure.** Most organizations 
 
 The lab implements two PKI hierarchies using proven, widely-supported algorithms:
 
-| Algorithm    | Use Case                          | Key Strength                              |
-|--------------|-----------------------------------|-------------------------------------------|
-| **RSA-4096** | Users, servers, legacy devices    | Universal support, well-understood        |
-| **ECC P-384**| IoT devices, mobile, edge compute | Smaller keys, faster operations, low power|
+| Algorithm     | Use Case                          | Key Strength                               |
+|---------------|-----------------------------------|--------------------------------------------|
+| **RSA-4096**  | Users, servers, legacy devices    | Universal support, well-understood         |
+| **ECC P-384** | IoT devices, mobile, edge compute | Smaller keys, faster operations, low power |
 
 Each hierarchy follows a three-tier structure:
 
