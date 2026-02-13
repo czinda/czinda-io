@@ -9,7 +9,7 @@ buildFuture = false
 buildExpired = false
 
 [params]
-  author = "Czinda"
+  author = "Chris"
   description = "Personal blog and thoughts on PKI, identity management, and security"
   showReadingTime = true
   showShareButtons = false
@@ -19,7 +19,7 @@ buildExpired = false
   defaultTheme = "auto"
   
   [params.homeInfoParams]
-    Title = "Hey, I'm Czinda"
+    Title = "Hey, I'm Chris"
     Content = "Senior Technical Product Manager focused on PKI, identity management, and enterprise security."
 
   [[params.socialIcons]]
