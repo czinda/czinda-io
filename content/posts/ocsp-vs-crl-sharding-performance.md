@@ -37,7 +37,7 @@ CRL sharding partitions revoked certificates across multiple smaller CRLs based 
 
 The assignment is straightforward:
 
-```
+```text
 shard_id = SHA-256(serial_number)[0..4] % shard_count
 ```
 
@@ -45,10 +45,10 @@ Take the first 4 bytes of the SHA-256 hash of the certificate's serial number, i
 
 The CA embeds the shard's CRL Distribution Point URL in each certificate at issuance time:
 
-```
+```text
 X509v3 CRL Distribution Points:
     Full Name:
-        URI:https://crl.example.com/crl/shard/97
+        URI:http://crl.example.com/crl/shard/97
 ```
 
 The relying party does not need to compute the hash. It reads the distribution point from the certificate and fetches that URL. The shard is a standard X.509 CRL --- any existing CRL processing code works without modification.

@@ -166,7 +166,7 @@ Dogtag PKI exposes EST as a native subsystem. The enrollment flow:
 │  3. Install  │   Signed cert     │  Issue cert  │
 │     cert     │                    │              │
 │              │                    │              │
-│  ... 89 days later ...            │              │
+│              │  ... 89 days ...   │              │
 │              │                    │              │
 │  4. Re-enroll├───/simplereenroll─▶│  Validate    │
 │     (renew)  │   + CSR + cert    │  + re-issue  │
