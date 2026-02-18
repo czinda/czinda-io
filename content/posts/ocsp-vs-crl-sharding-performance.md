@@ -196,6 +196,34 @@ If a relying party validates certificates spanning more than 18 distinct shards 
 - Simplicity matters more than optimal bandwidth
 - You are operating in an air-gapped or offline environment
 
+## Where the Industry Is Heading
+
+The measurements above capture the current state of the art, but the revocation landscape is shifting fast. Several developments in the past year are pushing the industry decisively toward CRL-based approaches.
+
+**Let's Encrypt shut down its OCSP responders.** In August 2025, Let's Encrypt — the world's largest public CA — [stopped serving OCSP responses entirely](https://letsencrypt.org/2025/01/30/ocsp-service-is-being-turned-off/). At peak, their OCSP infrastructure handled 340 billion requests per month. They moved to CRL-only revocation, citing privacy concerns (OCSP lets the CA see which sites users visit), operational complexity, and the fact that most browsers had already stopped relying on OCSP for real-time checks. When the CA responsible for over half of all public TLS certificates abandons OCSP, it is a strong signal.
+
+This was not sudden. The CA/Browser Forum made OCSP optional for public CAs in 2023, removing the previous requirement. HARICA has announced it will deprecate OCSP by March 2026. The trend is clear: OCSP is being phased out of the WebPKI.
+
+**Browsers have moved to local revocation checking.** Firefox deployed [CRLite](https://blog.mozilla.org/security/2020/01/09/crlite-part-1-all-web-pki-revocations-compressed/) as the default revocation mechanism starting with Firefox 137 (April 2025). CRLite compresses the entire set of revoked Web PKI certificates — roughly 4 million entries — into a ~300 KB daily download using Clubcard cascade filters. The browser checks revocation locally against this compressed dataset with zero network requests and zero privacy leakage. No OCSP query, no CRL download at validation time.
+
+Chrome takes a different approach with CRLSets, but coverage is limited. CRLSets contain only about 35,000 entries out of roughly 4 million total revocations — less than 1% coverage. Google selects which revocations to include based on perceived risk, which means most revoked certificates are not covered.
+
+For enterprise and private PKI, the browser approaches are not directly applicable, but they validate the architectural direction: push revocation data to relying parties in bulk rather than querying per-certificate. CRL sharding follows the same philosophy.
+
+**Certificate lifetimes are shrinking dramatically.** The CA/Browser Forum passed [Ballot SC-081v3](https://cabforum.org/2025/04/11/ballot-sc-081v3-introduce-schedule-of-reducing-validity-and-data-reuse-periods/) in April 2025, establishing a mandatory reduction schedule for public certificate validity:
+
+| Effective Date | Maximum Validity |
+|---|---|
+| March 15, 2026 | 200 days |
+| March 15, 2027 | 100 days |
+| March 15, 2029 | 47 days |
+
+At 47-day certificate lifetimes, the window during which a revoked certificate remains dangerous shrinks substantially. Short-lived certificates reduce the need for real-time revocation checking — if a certificate will expire in a few weeks anyway, the urgency of propagating revocation status diminishes. This further weakens the case for OCSP's real-time model and strengthens periodic CRL distribution.
+
+**Post-quantum signatures will amplify the size advantage of CRL sharding.** NIST finalized its first post-quantum cryptography standards in August 2024, including [ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) (formerly CRYSTALS-Dilithium) for digital signatures. ML-DSA-65 signatures are approximately 3,300 bytes — over 6x larger than the 512-byte RSA-4096 signatures in the measurements above.
+
+When CAs transition to post-quantum algorithms, every signed response gets more expensive. An OCSP response with an ML-DSA signature would be roughly 5,400 bytes per certificate lookup. A CRL shard with the same signature amortizes that 3,300-byte cost across all entries in the shard. The sharding advantage measured at 2.4x with RSA-4096 would widen significantly with post-quantum signatures.
+
 ## What I Would Measure Next
 
 These tests run on localhost, which eliminates network latency and jitter. In a production deployment, the TLS handshake cost would increase with network round-trips (1-RTT for TLS 1.3 resumption, 2-RTT for a fresh handshake), and the relative impact of payload size would increase on constrained links. Measuring over a realistic WAN path --- especially from IoT devices on cellular connections --- would produce different absolute numbers while likely preserving the same relative ordering.

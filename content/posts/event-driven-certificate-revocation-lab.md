@@ -309,4 +309,24 @@ The code is open source and contributions are welcome: [github.com/czinda/cert-r
 
 ---
 
+## Update: February 2026
+
+Several industry developments since this post was published validate the event-driven approach and expand the tooling available.
+
+**OCSP deprecation validates CRL-based revocation.** Let's Encrypt [shut down its OCSP responders](https://letsencrypt.org/2025/01/30/ocsp-service-is-being-turned-off/) in August 2025 after handling 340 billion requests per month at peak. The CA/Browser Forum made OCSP optional for public CAs in 2023, and HARICA is deprecating OCSP by March 2026. Firefox replaced OCSP with CRLite (compressed local CRL checking) as of Firefox 137. The industry is moving to CRL-based revocation, which aligns well with the model in this lab — revocation events update the CRL, and relying parties consume it on their own schedule without per-certificate queries to an OCSP responder.
+
+**Ansible Automation Platform 2.6.** Red Hat released [AAP 2.6](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/html/red_hat_ansible_automation_platform_release_notes/index) in November 2025 with several features relevant to this architecture:
+
+- **External secret management** — native integration with HashiCorp Vault, CyberArk, and Azure Key Vault for CA credentials. The lab stores PKI admin credentials in AWX credential stores; AAP 2.6 allows pulling them from a dedicated secrets manager instead, improving the security posture.
+- **Enhanced Kafka support in EDA** — multi-topic subscriptions and wildcard topic matching. The lab's EDA rulebook listens on a single `security-events` topic; with AAP 2.6, you can subscribe to `security-events.*` to capture events from multiple sub-topics without modifying the rulebook.
+- **EDA job labels** — tag and filter automation jobs by event source, making it easier to audit which security events triggered which certificate actions.
+
+**EDA plugin namespace migration.** The Event-Driven Ansible plugin ecosystem is migrating source plugins from the `ansible.eda` namespace to `eda.builtin`. The Kafka source plugin used in this lab's rulebook (`ansible.eda.kafka`) should be updated to `eda.builtin.kafka` for forward compatibility with newer EDA controller versions.
+
+**Certificate lifetimes are shrinking.** The CA/Browser Forum passed [Ballot SC-081v3](https://cabforum.org/2025/04/11/ballot-sc-081v3-introduce-schedule-of-reducing-validity-and-data-reuse-periods/) in April 2025, mandating a reduction in public certificate validity to 200 days (March 2026), 100 days (March 2027), and 47 days (March 2029). At 47-day lifetimes, manual certificate renewal becomes impossible at any scale. The event-driven renewal model demonstrated in this lab — where Ansible monitors certificate expiration and triggers re-enrollment via EST or ACME — becomes not just a best practice but a necessity.
+
+**Post-quantum cryptography and algorithm migration.** NIST finalized [ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) (FIPS 204) and [ML-KEM](https://csrc.nist.gov/pubs/fips/203/final) (FIPS 203) in August 2024 as the first post-quantum cryptographic standards. The RSA-4096 and ECC P-384 algorithms used in this lab's PKI hierarchies are not quantum-resistant. When organizations begin migrating to post-quantum algorithms, the event-driven model becomes especially valuable — an algorithm migration across thousands of certificates is essentially a fleet-wide re-issuance event. The same EDA + Ansible pattern that handles revocation can drive algorithm migration: publish a migration event, trigger playbooks that re-enroll devices with new key types, and revoke the old certificates. The architecture does not need to change; only the playbook parameters do.
+
+---
+
 *This post is part of a series on PKI modernization and identity-driven security automation. Next up: [configuring Dogtag PKI certificate profiles for IoT device enrollment with Ansible](/posts/dogtag-pki-iot-profiles-ansible/).*

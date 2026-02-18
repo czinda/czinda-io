@@ -401,4 +401,25 @@ The code is open source: [github.com/czinda/cert-revocation-lab](https://github.
 
 ---
 
+## Update: February 2026
+
+Several developments since this post was published affect IoT PKI enrollment and the profile decisions described above.
+
+**Lightweight enrollment protocols for constrained devices.** The EST protocol (RFC 7030) works well for devices that can handle HTTPS, but many constrained IoT devices — battery-powered sensors, low-bandwidth LPWAN nodes — cannot afford a full TLS stack. Two emerging protocols address this:
+
+- **EST-coaps** ([RFC 9148](https://datatracker.ietf.org/doc/rfc9148/)) brings EST enrollment over CoAP and DTLS, reducing the transport overhead significantly for devices that already use CoAP for application data. The enrollment semantics are the same — `/simpleenroll`, `/simplereenroll`, `/cacerts` — but carried over UDP-based DTLS instead of TCP-based TLS.
+- **EST-oscore** (active [IETF draft](https://datatracker.ietf.org/doc/draft-ietf-ace-est-oscore/)) goes further, using OSCORE and EDHOC for object-level security. This eliminates even the DTLS session overhead, making certificate enrollment feasible on Class 1 constrained devices with as little as 10 KB of RAM.
+
+As Dogtag/RHCS adds support for these transport bindings, the profile configurations in this post remain valid — the certificate content does not change, only the enrollment transport.
+
+**Shorter certificate lifetimes are becoming mandatory.** The CA/Browser Forum passed [Ballot SC-081v3](https://cabforum.org/2025/04/11/ballot-sc-081v3-introduce-schedule-of-reducing-validity-and-data-reuse-periods/) in April 2025, reducing maximum public certificate validity to 200 days (March 2026), 100 days (March 2027), and ultimately 47 days (March 2029). While this ballot applies to Web PKI certificates, it sets the direction for the industry. The 90-day validity in the `iot-sensor` profile is already aligned with this trajectory — and for devices re-enrolling via EST, shorter lifetimes are operationally feasible as long as the renewal automation is reliable.
+
+**Post-quantum cryptography is finalized, but not ready for constrained IoT.** NIST finalized its first post-quantum standards in August 2024: [ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) (FIPS 204) for digital signatures and [ML-KEM](https://csrc.nist.gov/pubs/fips/203/final) (FIPS 203) for key encapsulation. This matters for the key type decisions in the profiles above. ECC P-384, used in the sensor and controller profiles, is not quantum-resistant. An eventual migration to ML-DSA will be necessary for long-term security.
+
+The challenge is size. An ML-DSA-44 public key is 1,312 bytes and a signature is approximately 2,420 bytes, compared to ECC P-384's 96-byte public key and ~96-byte signature. For constrained IoT devices, this is a significant increase in certificate size, CSR size, and bandwidth during enrollment. The migration path will likely involve hybrid certificates (ECC + ML-DSA) during a transition period, with profile constraints updated accordingly. The Dogtag profile structure is flexible enough to accommodate this — new key type constraints and signature algorithm policies can be added without restructuring the profile framework.
+
+**Dogtag PKI releases.** Dogtag PKI shipped versions [11.6.0](https://github.com/dogtagpki/pki/releases/tag/v11.6.0) and [11.7.0](https://github.com/dogtagpki/pki/releases/tag/v11.7.0) in 2025, with 11.8-beta also available. These releases include improvements to EST handling, ACME support, and the profile engine. If you are running an older version, upgrading is worth evaluating for the EST and profile management improvements alone.
+
+---
+
 *This post is part of a series on PKI modernization and identity-driven security automation. Previous: [Event-Driven Certificate Lifecycle Management with Ansible](/posts/event-driven-certificate-revocation-lab/).*
