@@ -363,20 +363,20 @@ The full lifecycle, managed entirely through Ansible and Dogtag/RHCS:
 ┌──────────────────────────────────────────────────────────────────────┐
 │                        Ansible Automation                            │
 │                                                                      │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────────┐  │
-│  │  Deploy      │    │  Enroll     │    │  Revoke (Event-Driven)  │  │
-│  │  Profiles    │    │  via EST    │    │  via EDA + Kafka        │  │
-│  │             │    │             │    │                         │  │
-│  │  Playbook    │    │  Playbook   │    │  Rulebook + Playbook    │  │
-│  └──────┬──────┘    └──────┬──────┘    └────────────┬────────────┘  │
-│         │                  │                        │               │
-└─────────┼──────────────────┼────────────────────────┼───────────────┘
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────────┐   │
+│  │  Deploy     │    │  Enroll     │    │  Revoke (Event-Driven)  │   │
+│  │  Profiles   │    │  via EST    │    │  via EDA + Kafka        │   │
+│  │             │    │             │    │                         │   │
+│  │  Playbook   │    │  Playbook   │    │  Rulebook + Playbook    │   │
+│  └──────┬──────┘    └──────┬──────┘    └────────────┬────────────┘   │
+│         │                  │                        │                │
+└─────────┼──────────────────┼────────────────────────┼────────────────┘
           │                  │                        │
           ▼                  ▼                        ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │                     Dogtag PKI / RHCS                                │
 │                                                                      │
-│  Certificate Profiles ──▶ EST Endpoint ──▶ Issued Certificates      │
+│  Certificate Profiles ──▶ EST Endpoint ──▶ Issued Certificates       │
 │                                               │                      │
 │                                               ▼                      │
 │                                          CRL / OCSP                  │
