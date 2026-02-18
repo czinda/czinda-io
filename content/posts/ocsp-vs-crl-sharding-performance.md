@@ -57,23 +57,14 @@ The relying party does not need to compute the hash. It reads the distribution p
 
 The measurements come from a PKI deployment running in containers (Podman Compose) with the following architecture:
 
-```
-                          ┌───────────┐
-                          │  Traefik  │
-                          │  (TLS)    │
-                          └─────┬─────┘
-                     ┌──────────┼──────────┐
-                     ▼          ▼          ▼
-              ┌──────────┐ ┌────────┐ ┌──────────┐
-              │  CA API  │ │  OCSP  │ │   CRL    │
-              │  (Axum)  │ │Respndr │ │  Worker  │
-              └────┬─────┘ └───┬────┘ └────┬─────┘
-                   │           │           │
-              ┌────▼───────────▼───────────▼────┐
-              │         PostgreSQL              │
-              │         Redis (OCSP cache)      │
-              └─────────────────────────────────┘
-```
+| Layer | Component | Role |
+|---|---|---|
+| **TLS termination** | Traefik | Handles TLS 1.3, mTLS client cert verification |
+| **Application** | CA API (Axum) | Certificate management, CRL shard serving |
+| | OCSP Responder | Responds to OCSP status queries |
+| | CRL Worker | Periodic CRL and shard generation |
+| **Data** | PostgreSQL | Certificate store, revocation records |
+| | Redis | OCSP pre-signed response cache |
 
 - **CA**: RSA-4096 signing key, SHA-256
 - **Certificates**: 1,000 issued, 300 revoked (reason: keyCompromise)
@@ -145,21 +136,11 @@ A CRL shard is a complete, signed X.509 CRL containing only the revoked certific
 
 ### Comparison
 
-```
-Wire payload per revocation check:
-
-OCSP response:     ████████████████████████  2,221 B
-CRL shard:         █████████                   931 B
-Full CRL:          ████████████████████████████████████████████  16,598 B
-
-                   0        5,000     10,000    15,000    20,000 bytes
-```
-
-| Method | Payload | TLS + Payload | Cacheable | Privacy |
-|---|---|---|---|---|
-| OCSP | 2,221 B | ~8,175 B | Per-cert, limited | CA sees queries |
-| CRL shard | 931 B | ~6,885 B | 24 hours | Shard only |
-| Full CRL | 16,598 B | ~22,552 B | 24 hours | Full privacy |
+| Method | Payload | TLS + Payload | vs OCSP | Cacheable | Privacy |
+|---|---|---|---|---|---|
+| **OCSP** | 2,221 B | ~8,175 B | 1x | Per-cert, limited | CA sees queries |
+| **CRL shard** | 931 B | ~6,885 B | 0.42x | 24 hours | Shard only |
+| **Full CRL** | 16,598 B | ~22,552 B | 7.5x | 24 hours | Full privacy |
 
 ## Analysis
 
@@ -187,12 +168,11 @@ For environments subject to regulatory scrutiny --- financial services, healthca
 
 The full CRL at 16,598 bytes is 17x larger than a single shard, but it is a single download that covers all 300 revocations. For a relying party that validates many certificates across many shards, downloading the full CRL may be more efficient than fetching dozens of individual shards. The breakeven point depends on how many distinct shards you would need:
 
-```
-Full CRL cost:    16,598 bytes (one-time)
-Shard cost:       ~900 bytes per shard
-
-Breakeven:        16,598 / 900 = ~18 shards
-```
+| | Cost |
+|---|---|
+| Full CRL (one-time) | 16,598 bytes |
+| Per shard | ~900 bytes |
+| **Breakeven** | **~18 shards** (16,598 / 900) |
 
 If a relying party validates certificates spanning more than 18 distinct shards within the CRL's validity period, the full CRL is more bandwidth-efficient. Below that threshold, shards win.
 
