@@ -63,12 +63,13 @@ The key insight: **Ansible already manages infrastructure.** Most organizations 
 
 ### Identity-Aware PKI Hierarchy
 
-The lab implements two PKI hierarchies using proven, widely-supported algorithms:
+The lab implements three independent PKI hierarchies, each on its own container network with dedicated 389DS instances and Dogtag CAs:
 
-| Algorithm     | Use Case                          | Key Strength                               |
-|---------------|-----------------------------------|--------------------------------------------|
-| **RSA-4096**  | Users, servers, legacy devices    | Universal support, well-understood         |
-| **ECC P-384** | IoT devices, mobile, edge compute | Smaller keys, faster operations, low power |
+| Algorithm      | Use Case                          | Key Strength                               |
+|----------------|-----------------------------------|--------------------------------------------|
+| **RSA-4096**   | Users, servers, legacy devices    | Universal support, well-understood         |
+| **ECC P-384**  | IoT devices, mobile, edge compute | Smaller keys, faster operations, low power |
+| **ML-DSA-87**  | Post-quantum readiness            | Quantum-resistant (NIST FIPS 204 Level 5)  |
 
 Each hierarchy follows a three-tier structure:
 
@@ -86,7 +87,7 @@ This separation is deliberate:
 - **Intermediate CA** handles day-to-day issuance for users and servers, and can be rotated without disrupting the trust chain
 - **IoT Sub-CA** issues constrained, short-lived certificates for devices with tightly scoped key usage and name constraints
 
-The algorithm choice maps to the identity type. User workstations and servers get RSA certificates for maximum compatibility. IoT devices — sensors, controllers, edge gateways — get ECC certificates because the smaller key size and faster cryptographic operations matter on constrained hardware.
+The algorithm choice maps to the identity type. User workstations and servers get RSA certificates for maximum compatibility. IoT devices — sensors, controllers, edge gateways — get ECC certificates because the smaller key size and faster cryptographic operations matter on constrained hardware. The ML-DSA-87 hierarchy provides a concrete post-quantum migration path — organizations can test PQ certificate issuance and revocation in the same event-driven pipeline before migrating production workloads.
 
 ### FreeIPA: The Identity Source of Truth
 
@@ -227,25 +228,35 @@ cd cert-revocation-lab
 ./setup-prerequisites.sh
 
 # Start with RSA PKI (default)
-sudo ./start-lab.sh
+./start-lab.sh
 
-# Or start with both RSA and ECC
-sudo ./start-lab.sh --all
+# Start with specific PKI types
+./start-lab.sh --ecc          # ECC P-384 only
+./start-lab.sh --pqc          # ML-DSA-87 only
+./start-lab.sh --all          # All three PKI types
 
 # Run the end-to-end test
-./test-revocation.sh
+./lab test --pki-type rsa --scenario "Certificate Private Key Compromise"
+
+# Check service health
+./lab status
+
+# Run comprehensive validation
+./lab validate
 ```
 
 The lab starts in phases:
 
-1. Base infrastructure (PostgreSQL, Redis, Zookeeper)
+1. Base infrastructure (PostgreSQL, Valkey, Zookeeper)
 2. Kafka event bus
-3. PKI containers (389DS + Dogtag CAs for RSA and ECC)
+3. PKI containers (389DS + Dogtag CAs — one network per algorithm)
 4. FreeIPA for identity management
 5. AWX/Ansible infrastructure
 6. Event-Driven Ansible server
 7. Mock EDR and SIEM tools
-8. Jupyter for analysis
+8. IoT client simulator (EST enrollment)
+9. Monitoring stack (Prometheus, Grafana, PKI exporter)
+10. Jupyter for analysis
 
 ### Testing Security Scenarios
 
@@ -325,7 +336,30 @@ Several industry developments since this post was published validate the event-d
 
 **Certificate lifetimes are shrinking.** The CA/Browser Forum passed [Ballot SC-081v3](https://cabforum.org/2025/04/11/ballot-sc-081v3-introduce-schedule-of-reducing-validity-and-data-reuse-periods/) in April 2025, mandating a reduction in public certificate validity to 200 days (March 2026), 100 days (March 2027), and 47 days (March 2029). At 47-day lifetimes, manual certificate renewal becomes impossible at any scale. The event-driven renewal model demonstrated in this lab — where Ansible monitors certificate expiration and triggers re-enrollment via EST or ACME — becomes not just a best practice but a necessity.
 
-**Post-quantum cryptography and algorithm migration.** NIST finalized [ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) (FIPS 204) and [ML-KEM](https://csrc.nist.gov/pubs/fips/203/final) (FIPS 203) in August 2024 as the first post-quantum cryptographic standards. The RSA-4096 and ECC P-384 algorithms used in this lab's PKI hierarchies are not quantum-resistant. When organizations begin migrating to post-quantum algorithms, the event-driven model becomes especially valuable — an algorithm migration across thousands of certificates is essentially a fleet-wide re-issuance event. The same EDA + Ansible pattern that handles revocation can drive algorithm migration: publish a migration event, trigger playbooks that re-enroll devices with new key types, and revoke the old certificates. The architecture does not need to change; only the playbook parameters do.
+**Post-quantum cryptography is no longer theoretical.** NIST finalized [ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) (FIPS 204) and [ML-KEM](https://csrc.nist.gov/pubs/fips/203/final) (FIPS 203) in August 2024 as the first post-quantum cryptographic standards. The lab now includes a full **ML-DSA-87 PKI hierarchy** — Root CA, Intermediate CA, IoT Sub-CA, and EST Sub-CA — running on a custom Dogtag build with ML-DSA support. This is not a placeholder; you can issue, revoke, and verify post-quantum certificates through the same event-driven pipeline as RSA and ECC. The EDA rulebook has explicit ML-DSA rules for all 26 event types, routing to PQ-specific revocation playbooks. Organizations can use this to test their post-quantum migration strategy end-to-end before touching production infrastructure.
+
+**Container image migration to Project Hummingbird and quay.io.** The lab has migrated away from Docker Hub where possible, standardizing on [Project Hummingbird](https://projecthummingbird.io/) and quay.io-hosted images. This matters for two reasons: reducing Docker Hub rate-limit friction in CI/CD and air-gapped environments, and aligning with the Red Hat ecosystem where quay.io is the default registry.
+
+The migration covers every replaceable image in the stack:
+
+| Before | After |
+|--------|-------|
+| `postgres:15` | `quay.io/hummingbird/postgresql:latest` |
+| `redis:7` | `quay.io/hummingbird/valkey:latest` |
+| `python:3.11-slim` (4 Containerfiles) | `quay.io/hummingbird/python:3.12-builder` |
+| `prom/prometheus:latest` | `quay.io/prometheus/prometheus:latest` |
+| `jupyter/minimal-notebook:latest` | `quay.io/jupyter/minimal-notebook:latest` |
+
+Images with no alternative — 389DS, Dogtag PKI, FreeIPA, AWX, EDA, Grafana, and Confluent Kafka/Zookeeper — stay on their current registries with fully-qualified `docker.io/` or `quay.io/` prefixes to prevent Podman's interactive registry selection prompt.
+
+A few practical lessons from the migration:
+
+- **Hummingbird images only publish `latest` tags.** There is no `postgresql:15` or `valkey:7`. If you have version-pinned variables in your `.env`, they must be set to `latest` or the pull will fail with `manifest unknown`.
+- **The Hummingbird Python image is Fedora 44 with Python 3.14**, not 3.12 despite the tag. This is new enough that many packages lack pre-built wheels. The Containerfiles install `gcc` and `python3-devel` via `dnf` for C extensions like aiokafka and pydantic-core, and use minimum version pins (`>=`) instead of exact pins (`==`) so pip can resolve to versions with Python 3.14 wheels.
+- **The Hummingbird Python image runs as UID 65532 by default** and does not include curl. Containerfiles use `USER 0` for build steps, `USER 65532` for runtime, and healthchecks use `python -c "import urllib.request; ..."` instead of curl.
+- **Valkey is a drop-in Redis replacement.** The only change is the healthcheck command: `valkey-cli ping` instead of `redis-cli ping`. The container name stays `redis` for backward compatibility with `REDIS_HOST` references in AWX and other services.
+
+Kafka and Zookeeper remain on Confluent images for now. The natural next step is migrating to [Strimzi](https://strimzi.io/) (`quay.io/strimzi/kafka`), which provides a UBI-based Kafka image with KRaft mode — eliminating the Zookeeper dependency entirely. That is a larger architectural change involving different environment variable configuration and KRaft storage initialization, so it is tracked separately.
 
 ---
 
