@@ -1,6 +1,6 @@
 ---
 title: "Configuring Dogtag PKI Certificate Profiles for IoT with Ansible"
-date: 2025-02-19
+date: 2026-02-19
 draft: false
 tags: ["pki", "ansible", "iot", "certificates", "dogtag", "rhcs", "est", "security", "post-quantum", "coap"]
 description: "How to build and automate Dogtag PKI certificate profiles for IoT device enrollment using EST, Ansible, and Red Hat Certificate System — covering constrained device enrollment, post-quantum key sizing, and certificate lifetimes aligned with SC-081v3."
