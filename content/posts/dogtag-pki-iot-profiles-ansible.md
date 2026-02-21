@@ -2,7 +2,7 @@
 title: "Configuring Dogtag PKI Certificate Profiles for IoT with Ansible"
 date: 2026-02-19
 draft: false
-tags: ["pki", "ansible", "iot", "certificates", "dogtag", "rhcs", "est", "security", "post-quantum", "coap"]
+tags: ["pki", "ansible", "iot", "certificates", "dogtag", "rhcs", "est", "security", "post-quantum"]
 description: "How to build and automate Dogtag PKI certificate profiles for IoT device enrollment using EST, Ansible, and Red Hat Certificate System — covering constrained device enrollment, post-quantum key sizing, and certificate lifetimes aligned with SC-081v3."
 ---
 
@@ -184,15 +184,6 @@ Dogtag PKI exposes EST as a native subsystem. The enrollment flow:
 ```
 
 The device authenticates to the EST endpoint using either a bootstrap certificate (installed at manufacture) or HTTP basic auth over TLS. Dogtag validates the request against the certificate profile — if the CSR does not match the profile constraints, enrollment is rejected.
-
-### Lightweight Enrollment for Constrained Devices
-
-EST over HTTPS works well for devices that can handle a full TLS stack, but many constrained IoT devices — battery-powered sensors, low-bandwidth LPWAN nodes — cannot afford that overhead. Two protocols extend EST to these environments:
-
-- **EST-coaps** ([RFC 9148](https://datatracker.ietf.org/doc/rfc9148/)) brings EST enrollment over CoAP and DTLS, reducing the transport overhead significantly for devices that already use CoAP for application data. The enrollment semantics are the same — `/simpleenroll`, `/simplereenroll`, `/cacerts` — but carried over UDP-based DTLS instead of TCP-based TLS.
-- **EST-oscore** (active [IETF draft](https://datatracker.ietf.org/doc/draft-ietf-ace-est-oscore/)) goes further, using OSCORE and EDHOC for object-level security. This eliminates even the DTLS session overhead, making certificate enrollment feasible on Class 1 constrained devices with as little as 10 KB of RAM.
-
-As Dogtag/RHCS adds support for these transport bindings, the profile configurations in this post remain valid — the certificate content does not change, only the enrollment transport.
 
 ### EST Configuration in Dogtag
 
