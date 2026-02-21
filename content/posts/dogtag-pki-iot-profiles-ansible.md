@@ -2,8 +2,8 @@
 title: "Configuring Dogtag PKI Certificate Profiles for IoT with Ansible"
 date: 2025-02-19
 draft: false
-tags: ["pki", "ansible", "iot", "certificates", "dogtag", "rhcs", "est", "security"]
-description: "How to build and automate Dogtag PKI certificate profiles for IoT device enrollment using EST, Ansible, and Red Hat Certificate System — and why FreeIPA isn't the right tool for this job."
+tags: ["pki", "ansible", "iot", "certificates", "dogtag", "rhcs", "est", "security", "post-quantum", "coap"]
+description: "How to build and automate Dogtag PKI certificate profiles for IoT device enrollment using EST, Ansible, and Red Hat Certificate System — covering constrained device enrollment, post-quantum key sizing, and certificate lifetimes aligned with SC-081v3."
 ---
 
 In the [previous post](/posts/event-driven-certificate-revocation-lab/), I covered event-driven certificate lifecycle management — how Ansible automates revocation when identity events fire. But revocation is only half the story. Before you can revoke a certificate, you have to issue one. And for IoT devices, issuance needs to be automated, constrained, and scalable.
@@ -26,7 +26,7 @@ But FreeIPA was not designed for IoT certificate management, and trying to force
 
 **Profile management is opaque.** Modifying certificate profiles in FreeIPA means working around its abstractions. The underlying Dogtag profiles are there, but FreeIPA's tooling discourages direct access to them.
 
-The right tool is the CA itself: **Dogtag PKI**, or its enterprise-supported downstream, **Red Hat Certificate System (RHCS)**. These provide the full certificate authority stack — profile engine, enrollment protocols, audit logging, HSM integration — without the identity management layer getting in the way.
+The right tool is the CA itself: **Dogtag PKI**, or its enterprise-supported downstream, **Red Hat Certificate System (RHCS)**. These provide the full certificate authority stack — profile engine, enrollment protocols, audit logging, HSM integration — without the identity management layer getting in the way. Dogtag PKI shipped versions [11.6.0](https://github.com/dogtagpki/pki/releases/tag/v11.6.0) and [11.7.0](https://github.com/dogtagpki/pki/releases/tag/v11.7.0) in 2025, with 11.8-beta also available, bringing improvements to EST handling, ACME support, and the profile engine.
 
 FreeIPA and RHCS complement each other. Use FreeIPA for identity (users, hosts, groups, policies). Use RHCS for PKI (certificate profiles, EST/ACME endpoints, CA hierarchy, revocation infrastructure). Connect them with Ansible.
 
@@ -120,10 +120,10 @@ policyset.sensorSet.7.default.params.crlDistPointsPointType_0=URIName
 Every line in this profile is a deliberate security decision:
 
 - **Subject name pattern** (`CN=sensor-.*\.iot\.example\.com`): Devices can only get certificates matching a specific naming convention. A compromised enrollment cannot mint certificates for arbitrary hostnames.
-- **90-day validity**: Short-lived certificates limit the blast radius of a compromise. The device must re-enroll via EST before expiration.
+- **90-day validity**: Short-lived certificates limit the blast radius of a compromise. The device must re-enroll via EST before expiration. This is already aligned with where the industry is heading — the CA/Browser Forum passed [Ballot SC-081v3](https://cabforum.org/2025/04/11/ballot-sc-081v3-introduce-schedule-of-reducing-validity-and-data-reuse-periods/) in April 2025, reducing maximum public certificate validity to 200 days (March 2026), 100 days (March 2027), and 47 days (March 2029). While SC-081v3 applies to Web PKI, it sets the direction for all certificate ecosystems. At these lifetimes, automated renewal via EST is not optional — it is the only way to keep devices enrolled.
 - **Client auth only** (EKU `1.3.6.1.5.5.7.3.2`): The certificate can only be used for TLS client authentication. It cannot be used as a server certificate or for code signing.
 - **ECC P-384 only**: The profile rejects RSA keys. IoT devices in this class use ECC exclusively.
-- **CRL distribution point**: Relying parties know where to check revocation status.
+- **CRL distribution point**: Relying parties know where to check revocation status. With the industry moving away from OCSP — Let's Encrypt shut down its responders, Firefox replaced OCSP with CRLite — CRL distribution points are more important than ever as the primary revocation mechanism.
 
 ### Profile Variants by Device Class
 
@@ -137,6 +137,14 @@ Different device classes need different profiles:
 | `ot-scada` | SCADA HMIs, historian servers | 365 days | RSA-4096 | Client auth, server auth |
 
 The gateway profile allows server auth because gateways accept inbound connections from sensors. The SCADA profile uses RSA because many legacy OT systems do not support ECC. Each profile encodes these requirements as enforceable constraints — not documentation, not convention, but CA-enforced policy.
+
+### Post-Quantum Key Sizing and IoT Profiles
+
+The key type decisions in these profiles will eventually need to account for post-quantum cryptography. NIST finalized [ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) (FIPS 204) for digital signatures and [ML-KEM](https://csrc.nist.gov/pubs/fips/203/final) (FIPS 203) for key encapsulation in August 2024. ECC P-384, used in the sensor and controller profiles, is not quantum-resistant. An eventual migration to ML-DSA will be necessary for long-term security.
+
+The challenge is size. An ML-DSA-44 public key is 1,312 bytes and a signature is approximately 2,420 bytes, compared to ECC P-384's 96-byte public key and ~96-byte signature. For constrained IoT devices, this is a significant increase in certificate size, CSR size, and bandwidth during enrollment. The migration path will likely involve hybrid certificates (ECC + ML-DSA) during a transition period, with profile constraints updated accordingly. The Dogtag profile structure is flexible enough to accommodate this — new key type constraints and signature algorithm policies can be added without restructuring the profile framework.
+
+The [cert-revocation-lab](https://github.com/czinda/cert-revocation-lab) already includes a full ML-DSA-87 PKI hierarchy for testing post-quantum issuance and revocation through the same event-driven pipeline. Organizations can use it to evaluate the impact of PQ certificate sizes on their IoT enrollment workflows before committing to a migration timeline.
 
 ## EST: Automated Device Enrollment
 
@@ -176,6 +184,15 @@ Dogtag PKI exposes EST as a native subsystem. The enrollment flow:
 ```
 
 The device authenticates to the EST endpoint using either a bootstrap certificate (installed at manufacture) or HTTP basic auth over TLS. Dogtag validates the request against the certificate profile — if the CSR does not match the profile constraints, enrollment is rejected.
+
+### Lightweight Enrollment for Constrained Devices
+
+EST over HTTPS works well for devices that can handle a full TLS stack, but many constrained IoT devices — battery-powered sensors, low-bandwidth LPWAN nodes — cannot afford that overhead. Two protocols extend EST to these environments:
+
+- **EST-coaps** ([RFC 9148](https://datatracker.ietf.org/doc/rfc9148/)) brings EST enrollment over CoAP and DTLS, reducing the transport overhead significantly for devices that already use CoAP for application data. The enrollment semantics are the same — `/simpleenroll`, `/simplereenroll`, `/cacerts` — but carried over UDP-based DTLS instead of TCP-based TLS.
+- **EST-oscore** (active [IETF draft](https://datatracker.ietf.org/doc/draft-ietf-ace-est-oscore/)) goes further, using OSCORE and EDHOC for object-level security. This eliminates even the DTLS session overhead, making certificate enrollment feasible on Class 1 constrained devices with as little as 10 KB of RAM.
+
+As Dogtag/RHCS adds support for these transport bindings, the profile configurations in this post remain valid — the certificate content does not change, only the enrollment transport.
 
 ### EST Configuration in Dogtag
 
@@ -353,7 +370,7 @@ EST re-enrollment can be triggered by Ansible on a schedule or by the device its
       notify: restart device agent
 ```
 
-Schedule this playbook in AWX to run weekly. Devices within 30 days of expiration get renewed automatically. Devices with time remaining are skipped.
+Schedule this playbook in AWX to run weekly. Devices within 30 days of expiration get renewed automatically. Devices with time remaining are skipped. As certificate lifetimes shrink toward the 47-day floor set by SC-081v3, this renewal automation shifts from convenience to necessity — at 90-day validity with a 30-day threshold, devices have a 60-day window, but at 47-day validity, the margin for missed renewals disappears.
 
 ## Tying It Together: Profile to Enrollment to Revocation
 
@@ -379,14 +396,14 @@ The full lifecycle, managed entirely through Ansible and Dogtag/RHCS:
 │  Certificate Profiles ──▶ EST Endpoint ──▶ Issued Certificates       │
 │                                               │                      │
 │                                               ▼                      │
-│                                          CRL / OCSP                  │
+│                                             CRL                      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 1. **Ansible deploys profiles** to Dogtag, defining what certificates look like for each device class
 2. **Devices enroll via EST** (or Ansible enrolls on their behalf), getting certificates that conform to the profile
 3. **Security events trigger EDA**, which runs Ansible playbooks to revoke certificates in the same Dogtag CA
-4. **Dogtag publishes revocation** via CRL and OCSP, so relying parties stop trusting the revoked certificate
+4. **Dogtag publishes revocation** via CRL, so relying parties stop trusting the revoked certificate
 5. **Remediated devices re-enroll via EST**, getting a fresh certificate under the same profile constraints
 
 Every step is automated. Every step is auditable. Every step uses the same tooling.
@@ -398,27 +415,6 @@ FreeIPA is the right tool for managing user and host identity. It is not the rig
 Ansible ties it all together. The same automation platform that deploys your infrastructure can deploy your certificate profiles, enroll your devices, renew your fleet, and revoke compromised certificates — all in readable, auditable, idempotent playbooks.
 
 The code is open source: [github.com/czinda/cert-revocation-lab](https://github.com/czinda/cert-revocation-lab)
-
----
-
-## Update: February 2026
-
-Several developments since this post was published affect IoT PKI enrollment and the profile decisions described above.
-
-**Lightweight enrollment protocols for constrained devices.** The EST protocol (RFC 7030) works well for devices that can handle HTTPS, but many constrained IoT devices — battery-powered sensors, low-bandwidth LPWAN nodes — cannot afford a full TLS stack. Two emerging protocols address this:
-
-- **EST-coaps** ([RFC 9148](https://datatracker.ietf.org/doc/rfc9148/)) brings EST enrollment over CoAP and DTLS, reducing the transport overhead significantly for devices that already use CoAP for application data. The enrollment semantics are the same — `/simpleenroll`, `/simplereenroll`, `/cacerts` — but carried over UDP-based DTLS instead of TCP-based TLS.
-- **EST-oscore** (active [IETF draft](https://datatracker.ietf.org/doc/draft-ietf-ace-est-oscore/)) goes further, using OSCORE and EDHOC for object-level security. This eliminates even the DTLS session overhead, making certificate enrollment feasible on Class 1 constrained devices with as little as 10 KB of RAM.
-
-As Dogtag/RHCS adds support for these transport bindings, the profile configurations in this post remain valid — the certificate content does not change, only the enrollment transport.
-
-**Shorter certificate lifetimes are becoming mandatory.** The CA/Browser Forum passed [Ballot SC-081v3](https://cabforum.org/2025/04/11/ballot-sc-081v3-introduce-schedule-of-reducing-validity-and-data-reuse-periods/) in April 2025, reducing maximum public certificate validity to 200 days (March 2026), 100 days (March 2027), and ultimately 47 days (March 2029). While this ballot applies to Web PKI certificates, it sets the direction for the industry. The 90-day validity in the `iot-sensor` profile is already aligned with this trajectory — and for devices re-enrolling via EST, shorter lifetimes are operationally feasible as long as the renewal automation is reliable.
-
-**Post-quantum cryptography is finalized, but not ready for constrained IoT.** NIST finalized its first post-quantum standards in August 2024: [ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) (FIPS 204) for digital signatures and [ML-KEM](https://csrc.nist.gov/pubs/fips/203/final) (FIPS 203) for key encapsulation. This matters for the key type decisions in the profiles above. ECC P-384, used in the sensor and controller profiles, is not quantum-resistant. An eventual migration to ML-DSA will be necessary for long-term security.
-
-The challenge is size. An ML-DSA-44 public key is 1,312 bytes and a signature is approximately 2,420 bytes, compared to ECC P-384's 96-byte public key and ~96-byte signature. For constrained IoT devices, this is a significant increase in certificate size, CSR size, and bandwidth during enrollment. The migration path will likely involve hybrid certificates (ECC + ML-DSA) during a transition period, with profile constraints updated accordingly. The Dogtag profile structure is flexible enough to accommodate this — new key type constraints and signature algorithm policies can be added without restructuring the profile framework.
-
-**Dogtag PKI releases.** Dogtag PKI shipped versions [11.6.0](https://github.com/dogtagpki/pki/releases/tag/v11.6.0) and [11.7.0](https://github.com/dogtagpki/pki/releases/tag/v11.7.0) in 2025, with 11.8-beta also available. These releases include improvements to EST handling, ACME support, and the profile engine. If you are running an older version, upgrading is worth evaluating for the EST and profile management improvements alone.
 
 ---
 

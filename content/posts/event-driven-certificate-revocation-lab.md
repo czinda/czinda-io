@@ -1,6 +1,6 @@
 ---
 title: "Event-Driven Certificate Lifecycle Management with Ansible"
-date: 2026-02-20
+date: 2025-02-12
 draft: false
 tags: ["pki", "zero-trust", "ansible", "certificates", "security", "iot", "identity", "hummingbird", "ubi", "containers", "post-quantum"]
 description: "Automating the full certificate lifecycle — from issuance to revocation — using Event-Driven Ansible, Dogtag PKI, FreeIPA, UBI minimal containers, and post-quantum ML-DSA-87 certificates in an industry moving toward CRL-based revocation and 47-day cert lifetimes."
