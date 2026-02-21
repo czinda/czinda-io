@@ -322,7 +322,48 @@ The code is open source and contributions are welcome: [github.com/czinda/cert-r
 
 ## Update: February 2026
 
-Several industry developments since this post was published validate the event-driven approach and expand the tooling available.
+Several industry developments since this post was published validate the event-driven approach and expand the tooling available. The biggest changes to the lab itself are the migration to Project Hummingbird container images and UBI minimal base images — a shift that reduces attack surface, eliminates Docker Hub rate-limit friction, and aligns the lab with how Red Hat ships production container workloads.
+
+### Container Image Migration: Project Hummingbird and UBI Minimal
+
+The original lab pulled most of its images from Docker Hub — `postgres:15`, `redis:7`, `python:3.11-slim`, and so on. These are Debian-based images carrying a full `apt` package manager, hundreds of packages the lab never uses, and a CVE surface area that grows with every unused library. For a security-focused lab that manages PKI infrastructure, running unnecessarily large base images is a contradiction.
+
+[Project Hummingbird](https://projecthummingbird.io/) provides community container images built on Fedora and UBI (Universal Base Image) bases, hosted on quay.io. The project exists to give the container ecosystem a credible alternative to Docker Hub's Debian-based official images, aligned with the Red Hat and Fedora ecosystem. The images are minimal by design — they include only what the application needs to run, not a general-purpose Linux distribution.
+
+**Why UBI Minimal matters.** Red Hat's [Universal Base Image](https://catalog.redhat.com/software/base-images) comes in several variants. The one that matters most for production containers is **UBI Minimal** (`ubi9/ubi-minimal`). It uses `microdnf` instead of `dnf`, ships without a package cache, excludes documentation, and omits utilities like `curl`, `wget`, and even a shell in the micro variant. A standard `ubi9` image is roughly 215 MB. UBI Minimal is around 90 MB. UBI Micro drops below 40 MB.
+
+For a PKI lab, this is not just a size optimization — it is a security posture decision:
+
+- **Fewer packages = fewer CVEs.** Every binary in a container image is a potential vulnerability. A Debian-based `python:3.11-slim` image carries `apt`, `dpkg`, `perl`, `openssl` CLI tools, and dozens of shared libraries that the Python application never calls. Each one shows up in vulnerability scans and requires patching. UBI Minimal eliminates most of this.
+- **No shell in production images.** If an attacker gains code execution inside a container, the first thing they look for is a shell. UBI Micro images have no `/bin/sh`. The attacker has code execution in a process that can talk to its own application, and nothing else. For containers that handle CA credentials and certificate signing operations, this matters.
+- **Deterministic supply chain.** UBI images are built and signed by Red Hat, scanned continuously, and published to `registry.access.redhat.com` and `quay.io`. The provenance is traceable. Docker Hub official images are maintained by Docker, Inc. and community volunteers with varying levels of security rigor.
+- **Air-gapped and disconnected environments.** Many organizations that run enterprise PKI do so in air-gapped networks. Docker Hub rate limits (100 pulls per 6 hours for anonymous users) make it impractical to rebuild containers in disconnected CI/CD pipelines without a paid subscription or a registry mirror. Quay.io has no anonymous rate limits. UBI images can also be redistributed freely under Red Hat's EULA, which matters for government and defense environments.
+
+**What the migration looks like.** The lab replaced every Docker Hub image that has a Hummingbird or quay.io equivalent:
+
+| Before (Docker Hub, Debian-based) | After (quay.io, Fedora/UBI-based) | Why |
+|---|---|---|
+| `postgres:15` | `quay.io/hummingbird/postgresql:latest` | Fedora-based, no Debian apt chain |
+| `redis:7` | `quay.io/hummingbird/valkey:latest` | Valkey fork, Redis-compatible, Fedora-based |
+| `python:3.11-slim` (4 Containerfiles) | `quay.io/hummingbird/python:3.12-builder` | Fedora 44 base, Python 3.14, non-root default |
+| `prom/prometheus:latest` | `quay.io/prometheus/prometheus:latest` | Already on quay.io, just pinning the registry |
+| `jupyter/minimal-notebook:latest` | `quay.io/jupyter/minimal-notebook:latest` | Already on quay.io, just pinning the registry |
+
+Images with no Hummingbird or quay.io alternative — 389DS, Dogtag PKI, FreeIPA, AWX, EDA, Grafana, and Confluent Kafka/Zookeeper — stay on their current registries. Every image reference now uses a fully-qualified registry prefix (`docker.io/`, `quay.io/`, `registry.access.redhat.com/`) to prevent Podman's interactive registry selection prompt, which breaks unattended lab startup.
+
+**Practical lessons from the Hummingbird migration:**
+
+- **Hummingbird images only publish `latest` tags.** There is no `postgresql:15` or `valkey:7`. If you have version-pinned variables in your `.env`, they must be set to `latest` or the pull will fail with `manifest unknown`. This is a trade-off: you lose version pinning but gain a rolling-release model where images track the latest stable Fedora package. For a lab environment this is acceptable; for production, you would want to build your own images from UBI base and pin your application versions explicitly.
+
+- **The Hummingbird Python image is Fedora 44 with Python 3.14**, not 3.12 despite the tag. Python 3.14 is new enough that many packages lack pre-built wheels. The lab's Containerfiles install `gcc` and `python3-devel` via `dnf` for C extensions like `aiokafka` and `pydantic-core`, and use minimum version pins (`>=`) instead of exact pins (`==`) so pip can resolve to versions with Python 3.14 wheels. This is the most disruptive change in the migration — if your application depends on a package that has not published Python 3.14 wheels yet, you need the build toolchain in the image.
+
+- **The Hummingbird Python image runs as UID 65532 by default** and does not include `curl`. This is the UBI minimal philosophy in action: the image ships only what Python needs to run. Containerfiles use `USER 0` for build steps (installing system packages, pip install), then switch to `USER 65532` for runtime. Healthchecks use `python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"` instead of `curl`. This is more verbose but eliminates a binary from the attack surface.
+
+- **Valkey is a drop-in Redis replacement.** The [Valkey](https://valkey.io/) project forked from Redis when Redis changed its license in March 2024. The Hummingbird Valkey image is wire-compatible with Redis. The only change in the lab is the healthcheck command: `valkey-cli ping` instead of `redis-cli ping`. The container name stays `redis` for backward compatibility with `REDIS_HOST` references in AWX and other services. For new deployments, there is no reason to use Redis over Valkey.
+
+**What is left to migrate.** Kafka and Zookeeper remain on Confluent images (`confluentinc/cp-kafka`, `confluentinc/cp-zookeeper`). The natural next step is [Strimzi](https://strimzi.io/) (`quay.io/strimzi/kafka`), which provides a **UBI-based Kafka image with KRaft mode** — eliminating the Zookeeper dependency entirely. KRaft replaces Zookeeper's role in Kafka metadata management with a built-in Raft consensus protocol, reducing the lab from 10 containers to 9 and removing an entire category of operational complexity (Zookeeper quorum management, session timeouts, data directory corruption). That migration involves different environment variable configuration and KRaft storage initialization, so it is tracked separately. The 389DS, Dogtag PKI, and FreeIPA images are already UBI-based — they come from Red Hat and Fedora package builds that target UBI natively.
+
+### Industry Developments
 
 **OCSP deprecation validates CRL-based revocation.** Let's Encrypt [shut down its OCSP responders](https://letsencrypt.org/2025/01/30/ocsp-service-is-being-turned-off/) in August 2025 after handling 340 billion requests per month at peak. The CA/Browser Forum made OCSP optional for public CAs in 2023, and HARICA is deprecating OCSP by March 2026. Firefox replaced OCSP with CRLite (compressed local CRL checking) as of Firefox 137. The industry is moving to CRL-based revocation, which aligns well with the model in this lab — revocation events update the CRL, and relying parties consume it on their own schedule without per-certificate queries to an OCSP responder.
 
@@ -337,29 +378,6 @@ Several industry developments since this post was published validate the event-d
 **Certificate lifetimes are shrinking.** The CA/Browser Forum passed [Ballot SC-081v3](https://cabforum.org/2025/04/11/ballot-sc-081v3-introduce-schedule-of-reducing-validity-and-data-reuse-periods/) in April 2025, mandating a reduction in public certificate validity to 200 days (March 2026), 100 days (March 2027), and 47 days (March 2029). At 47-day lifetimes, manual certificate renewal becomes impossible at any scale. The event-driven renewal model demonstrated in this lab — where Ansible monitors certificate expiration and triggers re-enrollment via EST or ACME — becomes not just a best practice but a necessity.
 
 **Post-quantum cryptography is no longer theoretical.** NIST finalized [ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) (FIPS 204) and [ML-KEM](https://csrc.nist.gov/pubs/fips/203/final) (FIPS 203) in August 2024 as the first post-quantum cryptographic standards. The lab now includes a full **ML-DSA-87 PKI hierarchy** — Root CA, Intermediate CA, IoT Sub-CA, and EST Sub-CA — running on a custom Dogtag build with ML-DSA support. This is not a placeholder; you can issue, revoke, and verify post-quantum certificates through the same event-driven pipeline as RSA and ECC. The EDA rulebook has explicit ML-DSA rules for all 26 event types, routing to PQ-specific revocation playbooks. Organizations can use this to test their post-quantum migration strategy end-to-end before touching production infrastructure.
-
-**Container image migration to Project Hummingbird and quay.io.** The lab has migrated away from Docker Hub where possible, standardizing on [Project Hummingbird](https://projecthummingbird.io/) and quay.io-hosted images. This matters for two reasons: reducing Docker Hub rate-limit friction in CI/CD and air-gapped environments, and aligning with the Red Hat ecosystem where quay.io is the default registry.
-
-The migration covers every replaceable image in the stack:
-
-| Before | After |
-|--------|-------|
-| `postgres:15` | `quay.io/hummingbird/postgresql:latest` |
-| `redis:7` | `quay.io/hummingbird/valkey:latest` |
-| `python:3.11-slim` (4 Containerfiles) | `quay.io/hummingbird/python:3.12-builder` |
-| `prom/prometheus:latest` | `quay.io/prometheus/prometheus:latest` |
-| `jupyter/minimal-notebook:latest` | `quay.io/jupyter/minimal-notebook:latest` |
-
-Images with no alternative — 389DS, Dogtag PKI, FreeIPA, AWX, EDA, Grafana, and Confluent Kafka/Zookeeper — stay on their current registries with fully-qualified `docker.io/` or `quay.io/` prefixes to prevent Podman's interactive registry selection prompt.
-
-A few practical lessons from the migration:
-
-- **Hummingbird images only publish `latest` tags.** There is no `postgresql:15` or `valkey:7`. If you have version-pinned variables in your `.env`, they must be set to `latest` or the pull will fail with `manifest unknown`.
-- **The Hummingbird Python image is Fedora 44 with Python 3.14**, not 3.12 despite the tag. This is new enough that many packages lack pre-built wheels. The Containerfiles install `gcc` and `python3-devel` via `dnf` for C extensions like aiokafka and pydantic-core, and use minimum version pins (`>=`) instead of exact pins (`==`) so pip can resolve to versions with Python 3.14 wheels.
-- **The Hummingbird Python image runs as UID 65532 by default** and does not include curl. Containerfiles use `USER 0` for build steps, `USER 65532` for runtime, and healthchecks use `python -c "import urllib.request; ..."` instead of curl.
-- **Valkey is a drop-in Redis replacement.** The only change is the healthcheck command: `valkey-cli ping` instead of `redis-cli ping`. The container name stays `redis` for backward compatibility with `REDIS_HOST` references in AWX and other services.
-
-Kafka and Zookeeper remain on Confluent images for now. The natural next step is migrating to [Strimzi](https://strimzi.io/) (`quay.io/strimzi/kafka`), which provides a UBI-based Kafka image with KRaft mode — eliminating the Zookeeper dependency entirely. That is a larger architectural change involving different environment variable configuration and KRaft storage initialization, so it is tracked separately.
 
 ---
 
