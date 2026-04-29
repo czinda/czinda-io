@@ -1,18 +1,196 @@
+<style>
+.mermaid-container {
+  position: relative;
+  cursor: pointer;
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 8px;
+  padding: 1rem;
+  margin: 1.5rem 0;
+  overflow-x: auto;
+  transition: box-shadow 0.2s;
+}
+.mermaid-container:hover {
+  box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+}
+.mermaid-expand-hint {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  font-size: 0.75rem;
+  color: var(--secondary, #888);
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+.mermaid-container:hover .mermaid-expand-hint {
+  opacity: 1;
+}
+.mermaid-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0,0,0,0.85);
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+}
+.mermaid-overlay.active { display: flex; }
+.mermaid-overlay-content {
+  overflow: hidden;
+  width: 90vw;
+  height: 85vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: grab;
+}
+.mermaid-overlay-content:active { cursor: grabbing; }
+.mermaid-overlay-content svg {
+  transform-origin: 0 0;
+  transition: none;
+  max-width: none !important;
+  max-height: none !important;
+}
+.mermaid-overlay-controls {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+  align-items: center;
+}
+.mermaid-overlay-controls button {
+  background: rgba(255,255,255,0.15);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.mermaid-overlay-controls button:hover {
+  background: rgba(255,255,255,0.25);
+}
+.mermaid-overlay-zoom-level {
+  color: rgba(255,255,255,0.7);
+  font-size: 0.85rem;
+  min-width: 4em;
+  text-align: center;
+}
+</style>
+
+<div class="mermaid-overlay" id="mermaidOverlay">
+  <div class="mermaid-overlay-content" id="mermaidOverlayContent"></div>
+  <div class="mermaid-overlay-controls">
+    <button id="mermaidZoomOut" title="Zoom out">&#8722;</button>
+    <span class="mermaid-overlay-zoom-level" id="mermaidZoomLevel">100%</span>
+    <button id="mermaidZoomIn" title="Zoom in">&#43;</button>
+    <button id="mermaidReset" title="Reset view">Reset</button>
+    <button id="mermaidClose" title="Close (Esc)">Close</button>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function () {
-    if (document.querySelector('.mermaid')) {
-      var isDark = document.body.classList.contains('dark') ||
-        (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches &&
-         !document.body.classList.contains('light'));
+    if (!document.querySelector('.mermaid')) return;
 
-      mermaid.initialize({
-        startOnLoad: true,
-        theme: isDark ? 'dark' : 'default',
-        securityLevel: 'loose',
-        flowchart: { curve: 'basis', padding: 15 },
-        sequence: { mirrorActors: false }
-      });
+    var isDark = document.body.classList.contains('dark') ||
+      (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches &&
+       !document.body.classList.contains('light'));
+
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: isDark ? 'dark' : 'default',
+      securityLevel: 'loose',
+      flowchart: { curve: 'basis', padding: 15 },
+      sequence: { mirrorActors: false }
+    });
+
+    var overlay = document.getElementById('mermaidOverlay');
+    var content = document.getElementById('mermaidOverlayContent');
+    var zoomLabel = document.getElementById('mermaidZoomLevel');
+    var scale = 1, panX = 0, panY = 0, dragging = false, startX, startY;
+
+    function updateTransform() {
+      var svg = content.querySelector('svg');
+      if (svg) {
+        svg.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + scale + ')';
+      }
+      zoomLabel.textContent = Math.round(scale * 100) + '%';
     }
+
+    function resetView() {
+      scale = 1; panX = 0; panY = 0;
+      var svg = content.querySelector('svg');
+      if (svg) {
+        var cw = content.clientWidth, ch = content.clientHeight;
+        var sw = svg.getBoundingClientRect().width / scale;
+        var sh = svg.getBoundingClientRect().height / scale;
+        if (sw && sh) {
+          scale = Math.min(cw / sw, ch / sh, 2) * 0.9;
+          panX = (cw - sw * scale) / 2;
+          panY = (ch - sh * scale) / 2;
+        }
+      }
+      updateTransform();
+    }
+
+    function openOverlay(container) {
+      var svg = container.querySelector('svg');
+      if (!svg) return;
+      content.innerHTML = '';
+      var clone = svg.cloneNode(true);
+      clone.removeAttribute('style');
+      clone.style.transformOrigin = '0 0';
+      content.appendChild(clone);
+      overlay.classList.add('active');
+      document.body.style.overflow = 'hidden';
+      setTimeout(resetView, 50);
+    }
+
+    function closeOverlay() {
+      overlay.classList.remove('active');
+      document.body.style.overflow = '';
+      content.innerHTML = '';
+    }
+
+    document.querySelectorAll('.mermaid-container').forEach(function (c) {
+      c.addEventListener('click', function () { openOverlay(c); });
+    });
+
+    document.getElementById('mermaidClose').addEventListener('click', closeOverlay);
+    document.getElementById('mermaidZoomIn').addEventListener('click', function () {
+      scale = Math.min(scale * 1.25, 5); updateTransform();
+    });
+    document.getElementById('mermaidZoomOut').addEventListener('click', function () {
+      scale = Math.max(scale / 1.25, 0.2); updateTransform();
+    });
+    document.getElementById('mermaidReset').addEventListener('click', resetView);
+
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) closeOverlay();
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && overlay.classList.contains('active')) closeOverlay();
+    });
+
+    content.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      var factor = e.deltaY < 0 ? 1.1 : 0.9;
+      scale = Math.max(0.2, Math.min(5, scale * factor));
+      updateTransform();
+    }, { passive: false });
+
+    content.addEventListener('mousedown', function (e) {
+      dragging = true; startX = e.clientX - panX; startY = e.clientY - panY;
+    });
+    content.addEventListener('mousemove', function (e) {
+      if (!dragging) return;
+      panX = e.clientX - startX; panY = e.clientY - startY;
+      updateTransform();
+    });
+    document.addEventListener('mouseup', function () { dragging = false; });
   });
 </script>
