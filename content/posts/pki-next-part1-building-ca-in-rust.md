@@ -4,7 +4,6 @@ date: 2026-04-29
 draft: false
 tags: ["pki", "rust", "certificates", "security", "architecture", "ca", "pki-next"]
 description: "Why we chose Rust to build a modern Certificate Authority from scratch, the modular crate architecture that makes it work, and what 49,000 lines of Rust buys you that Java and C never could."
-mermaid: true
 series: ["PKI.Next"]
 ---
 

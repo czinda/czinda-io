@@ -4,7 +4,6 @@ date: 2026-05-05
 draft: true
 tags: ["pki", "audit", "security", "common-criteria", "hmac", "tamper-detection", "pki-next"]
 description: "How PKI.Next implements HMAC hash-chained audit logs for Common Criteria FAU_STG.2 compliance, the timestamp precision bug that silently broke chain verification, and why audit integrity is the hardest part of running a CA."
-mermaid: true
 series: ["PKI.Next"]
 ---
 

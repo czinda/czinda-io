@@ -4,7 +4,6 @@ date: 2026-05-07
 draft: true
 tags: ["pki", "est", "acme", "coap", "spiffe", "certificates", "security", "protocols", "pki-next"]
 description: "How PKI.Next serves EST, ACME, CoAP, SPIFFE/SPIRE, HashiCorp Vault, and Dogtag compatibility from a single CA using the Registration Authority pattern — and why protocol diversity is the future of PKI."
-mermaid: true
 series: ["PKI.Next"]
 ---
 

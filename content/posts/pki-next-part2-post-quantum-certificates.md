@@ -4,7 +4,6 @@ date: 2026-05-01
 draft: true
 tags: ["pki", "post-quantum", "ml-dsa", "fips-204", "certificates", "security", "cryptography", "pki-next"]
 description: "How PKI.Next implements ML-DSA (FIPS 204) post-quantum signatures today, the engineering decisions behind dual-mode PQC support, and why your CA needs to be ready before the quantum threat arrives."
-mermaid: true
 series: ["PKI.Next"]
 ---
 

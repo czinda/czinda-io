@@ -4,7 +4,6 @@ date: 2026-05-09
 draft: true
 tags: ["pki", "dogtag", "freeipa", "migration", "rust", "java", "security", "pki-next"]
 description: "What twenty years of operating Dogtag PKI taught us about building its replacement, the compatibility proxy that makes migration possible, and the architectural bets that will define the next twenty years of certificate management."
-mermaid: true
 series: ["PKI.Next"]
 ---
 

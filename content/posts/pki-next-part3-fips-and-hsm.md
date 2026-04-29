@@ -4,7 +4,6 @@ date: 2026-05-03
 draft: true
 tags: ["pki", "fips", "hsm", "pkcs11", "rust", "cryptography", "security", "pki-next"]
 description: "How PKI.Next uses Rust feature flags and trait objects to support three cryptographic backends — ring, aws-lc-rs (FIPS 140-3), and PKCS#11 hardware — without a single if-else in the certificate issuance path."
-mermaid: true
 series: ["PKI.Next"]
 ---
 
