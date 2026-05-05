@@ -1,7 +1,7 @@
 ---
 title: "PKI.Next Part 3: FIPS 140-3 and the Crypto Pluggability Problem"
-date: 2026-05-03
-draft: true
+date: 2026-05-07
+draft: false
 tags: ["pki", "fips", "hsm", "pkcs11", "rust", "cryptography", "security", "pki-next"]
 description: "How PKI.Next uses Rust feature flags and trait objects to support three cryptographic backends — ring, aws-lc-rs (FIPS 140-3), and PKCS#11 hardware — without a single if-else in the certificate issuance path."
 series: ["PKI.Next"]
@@ -61,12 +61,12 @@ Rust's feature flag system is a compile-time conditional compilation mechanism. 
 [features]
 default = []
 fips = ["aws-lc-rs"]
-pkcs11 = ["cryptoki", "sha2"]
+pkcs11 = ["cryptoki"]
 
 [dependencies]
-ring = { version = "0.17", optional = false }
-aws-lc-rs = { version = "1.12", optional = true }
-cryptoki = { version = "0.8", optional = true }
+ring = { workspace = true }
+aws-lc-rs = { workspace = true, optional = true }
+cryptoki = { workspace = true, optional = true }
 ```
 
 When you build with `cargo build --features fips`, the compiler includes `aws-lc-rs` and compiles code blocks gated behind `#[cfg(feature = "fips")]`. Code gated behind `#[cfg(not(feature = "fips"))]` is excluded entirely --- not dead code, but absent from the binary.
@@ -77,11 +77,12 @@ The `FipsSoftwareSigner` module only compiles when the `fips` feature is active:
 #[cfg(feature = "fips")]
 pub mod fips_signer;
 
-#[cfg(feature = "pkcs11")]
-pub mod hsm_signer;
+pub mod hsm_signer;  // always compiled — cryptoki is optional at link time
 ```
 
-This means the default build does not link against `aws-lc-rs` at all. This matters because `aws-lc-rs` depends on `aws-lc-sys`, which builds AWS-LC (a C library) from source using CMake and Go. The build is slow and requires a C toolchain. Development builds that do not need FIPS compliance should not pay that cost.
+The `hsm_signer` module is always compiled regardless of feature flags. The `cryptoki` dependency itself is optional, but the module's types and trait implementations are available unconditionally. This lets the `Pkcs11Signer` struct appear in function signatures and match arms without feature gates, simplifying the overall architecture.
+
+The `fips` feature gate matters because `aws-lc-rs` depends on `aws-lc-sys`, which builds AWS-LC (a C library) from source using CMake and Go. The build is slow and requires a C toolchain. Development builds that do not need FIPS compliance should not pay that cost.
 
 ## The Signer Trait
 
@@ -187,7 +188,7 @@ kp.sign(&signature::RSA_PKCS1_SHA256, &self.rng, data, &mut sig)?;
 ```dockerfile
 FROM builder AS fips-builder
 RUN dnf install -y cmake golang && dnf clean all
-RUN cargo build --release --features fips --workspace
+RUN cargo build --release --package pki-server --features fips,pkcs11
 ```
 
 The FIPS binary is built separately and produces distinct container images (`pki-ca-api-fips`, `pki-monolith-fips`) so that the image tag makes the compliance boundary visible.
@@ -238,19 +239,19 @@ PKI.Next's `Pkcs11Signer` maps each `SigningAlgorithm` variant to the correspond
 
 ```rust
 match algorithm {
-    SigningAlgorithm::EcdsaP256Sha256 =>
-        Mechanism::Ecdsa(MechanismType::ECDSA_SHA256),
+    SigningAlgorithm::EcdsaP256Sha256
+    | SigningAlgorithm::EcdsaP384Sha384 =>
+        Mechanism::Ecdsa,
     SigningAlgorithm::RsaSha256 =>
-        Mechanism::RsaPkcs(MechanismType::SHA256_RSA_PKCS),
+        Mechanism::Sha256RsaPkcs,
     SigningAlgorithm::Ed25519 =>
-        Mechanism::Eddsa(EddsaParams::new(false)),
+        Mechanism::Eddsa(EddsaParams::new(EddsaSignatureScheme::Ed25519)),
     SigningAlgorithm::MlDsa44
     | SigningAlgorithm::MlDsa65
     | SigningAlgorithm::MlDsa87 =>
         Mechanism::MlDsa(
             SignAdditionalContext::new(HedgeType::Preferred, None)
         ),
-    // ...
 }
 ```
 

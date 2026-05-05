@@ -1,7 +1,7 @@
 ---
 title: "PKI.Next Part 6: Replacing Dogtag PKI"
-date: 2026-05-09
-draft: true
+date: 2026-05-14
+draft: false
 tags: ["pki", "dogtag", "freeipa", "migration", "rust", "java", "security", "pki-next"]
 description: "What twenty years of operating Dogtag PKI taught us about building its replacement, the compatibility proxy that makes migration possible, and the architectural bets that will define the next twenty years of certificate management."
 series: ["PKI.Next"]
@@ -242,6 +242,8 @@ Every long-lived system is built on a set of architectural bets --- decisions th
 
 **Post-quantum cryptography is not optional.** CAs issue certificates with multi-year validity periods. A CA deployed today must support algorithms that will remain secure for the lifetime of the certificates it issues. ML-DSA support is an investment in future-proofing, not a checkbox feature.
 
+**The CA will become a transparency log operator.** The IETF PLANTS working group's [Merkle Tree Certificates](https://datatracker.ietf.org/doc/draft-ietf-plants-merkle-tree-certs/) specification makes the CA responsible for maintaining its own append-only issuance log --- a fundamental shift from bolting CT onto certificates after issuance. PKI.Next already implements MTC as an opt-in issuance mode: the `mtc_engine` appends `TBSCertificateLogEntry` records to the CA's own Merkle tree, computes inclusion proofs, and wraps certificates with `id-alg-mtcProof` instead of a cryptographic signature. The transition from RFC 6962 CT logging (which PKI.Next also supports) to MTC was additive, not architectural --- exactly the bet we were making.
+
 ## The Series So Far
 
 This series covered the major features and design decisions in PKI.Next:
@@ -249,13 +251,13 @@ This series covered the major features and design decisions in PKI.Next:
 | Part | Topic | Key Insight |
 |---|---|---|
 | [Part 1](/posts/pki-next-part1-building-ca-in-rust/) | Architecture | 23 crates, 7 binaries, RA pattern for protocol isolation |
-| [Part 2](/posts/pki-next-part2-post-quantum-certificates/) | Post-Quantum | ML-DSA-44/65/87 via software and PKCS#11, with TLS compatibility workarounds |
+| [Part 2](/posts/pki-next-part2-post-quantum-certificates/) | Post-Quantum | ML-DSA-44/65/87 via software and PKCS#11, plus Merkle Tree Certificates for PQC-era TLS |
 | [Part 3](/posts/pki-next-part3-fips-and-hsm/) | FIPS & HSM | Compile-time backend selection via feature flags and trait objects |
 | [Part 4](/posts/pki-next-part4-tamper-evident-audit/) | Audit | HMAC hash-chained logs for tamper detection, timestamp precision lesson |
 | [Part 5](/posts/pki-next-part5-protocol-servers/) | Protocols | EST, ACME, CoAP, SPIFFE, Vault, Dogtag from one CA |
 | [Part 6](/posts/pki-next-part6-replacing-dogtag/) | Migration | Compatibility proxy for zero-disruption Dogtag replacement |
 
-Together, they describe a CA built to handle the requirements of the next decade: post-quantum algorithms, container-native deployment, protocol diversity, and compliance-grade audit trails --- while maintaining backward compatibility with the infrastructure of the last decade.
+Together, they describe a CA built to handle the requirements of the next decade: post-quantum algorithms, Merkle Tree Certificates for PQC-era TLS efficiency, container-native deployment, protocol diversity, and compliance-grade audit trails --- while maintaining backward compatibility with the infrastructure of the last decade.
 
 ---
 

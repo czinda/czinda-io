@@ -1,7 +1,7 @@
 ---
 title: "PKI.Next Part 4: Tamper-Evident Audit Logs"
-date: 2026-05-05
-draft: true
+date: 2026-05-09
+draft: false
 tags: ["pki", "audit", "security", "common-criteria", "hmac", "tamper-detection", "pki-next"]
 description: "How PKI.Next implements HMAC hash-chained audit logs for Common Criteria FAU_STG.2 compliance, the timestamp precision bug that silently broke chain verification, and why audit integrity is the hardest part of running a CA."
 series: ["PKI.Next"]
@@ -155,7 +155,7 @@ sequenceDiagram
         end
     end
 
-    API-->>Client: { intact: true/false, records_checked: N, first_mismatch: ... }
+    API-->>Client: { intact: true/false, records_checked: N, first_broken_id: ... }
 {{< /mermaid >}}
 
 The verification walks the chain from the genesis record forward. For each record:
@@ -173,7 +173,9 @@ A successful verification response:
 {
   "intact": true,
   "records_checked": 847,
-  "first_mismatch": null
+  "first_broken_id": null,
+  "break_reason": null,
+  "verified_at": "2026-05-05T14:32:01Z"
 }
 ```
 
@@ -183,9 +185,9 @@ A failed verification:
 {
   "intact": false,
   "records_checked": 847,
-  "first_mismatch": 423,
-  "expected_hash": "2b91...",
-  "stored_hash": "a7f3..."
+  "first_broken_id": 423,
+  "break_reason": "HMAC mismatch: computed hash does not match stored record_hash",
+  "verified_at": "2026-05-05T14:32:01Z"
 }
 ```
 
@@ -332,15 +334,15 @@ PKI.Next logs audit events for every significant operation:
 | `certificate_unrevoked` | Certificate hold removed |
 | `crl_generated` | Full or delta CRL signed |
 | `profile_created` | New certificate profile added |
-| `profile_updated` | Profile configuration changed |
+| `profile_modified` | Profile configuration changed |
 | `profile_deleted` | Profile removed |
 | `user_created` | New RBAC user added |
 | `user_updated` | User properties changed |
 | `user_deleted` | User removed |
 | `role_assigned` | RBAC role granted |
 | `role_removed` | RBAC role revoked |
-| `login_success` | Authentication succeeded |
-| `login_failure` | Authentication failed |
+| `authentication_success` | Authentication succeeded |
+| `authentication_failure` | Authentication failed |
 
 Every event includes:
 - **event_type**: What happened
@@ -349,7 +351,7 @@ Every event includes:
 - **subject**: What was acted upon (certificate serial, profile ID, user ID)
 - **detail**: Additional context (reason code, algorithm, error message)
 
-The chain verification catches any modification to any of these fields. Changing a `certificate_revoked` event to hide a revocation would break the chain. Inserting a fake `login_success` event to cover unauthorized access would break the chain. Deleting any event would break the chain (the next record's `previous_hash` would reference a non-existent record).
+The chain verification catches any modification to any of these fields. Changing a `certificate_revoked` event to hide a revocation would break the chain. Inserting a fake `authentication_success` event to cover unauthorized access would break the chain. Deleting any event would break the chain (the next record's `previous_hash` would reference a non-existent record).
 
 ## Operational Considerations
 

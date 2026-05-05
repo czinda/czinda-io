@@ -3,7 +3,7 @@ title: "PKI.Next Part 1: Building a Certificate Authority in Rust"
 date: 2026-04-29
 draft: false
 tags: ["pki", "rust", "certificates", "security", "architecture", "ca", "pki-next"]
-description: "Why we chose Rust to build a modern Certificate Authority from scratch, the modular crate architecture that makes it work, and what 49,000 lines of Rust buys you that Java and C never could."
+description: "Why we chose Rust to build a modern Certificate Authority from scratch, the modular crate architecture that makes it work, and what 55,000 lines of Rust buys you that Java and C never could."
 series: ["PKI.Next"]
 ---
 
@@ -44,6 +44,7 @@ graph TD
         crypto["pki-crypto<br/><i>signing, cert building</i>"]
         store["pki-store<br/><i>persistence traits + PG</i>"]
         lint["pki-lint<br/><i>certificate validation</i>"]
+        ct["pki-ct<br/><i>Merkle trees, CT &amp; MTC</i>"]
     end
 
     subgraph "CA Engine"
@@ -72,9 +73,11 @@ graph TD
 
     types --> crypto
     types --> store
+    types --> ct
     crypto --> ca
     store --> ca
     lint --> ca
+    ct --> ca
     crypto --> ocsp
     ca --> server
     ocsp --> server
@@ -137,14 +140,17 @@ This is not a matter of opinion or architecture astronautics. In practice:
 The central abstraction in `pki-crypto` is the `Signer` trait:
 
 ```rust
+#[async_trait]
 pub trait Signer: Send + Sync {
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>>;
-    fn algorithm(&self) -> &SigningAlgorithm;
+    async fn sign(&self, data: &[u8]) -> Result<Vec<u8>, PkiError>;
+    fn algorithm(&self) -> SigningAlgorithm;
     fn public_key_der(&self) -> &[u8];
+    fn certificate_der(&self) -> &[u8];
+    fn certificate_chain_der(&self) -> Vec<Vec<u8>>;
 }
 ```
 
-Three methods. Every signing operation in the system --- certificate issuance, CRL signing, OCSP response signing --- goes through this trait. The implementations are:
+Five methods. Every signing operation in the system --- certificate issuance, CRL signing, OCSP response signing --- goes through this trait. The `sign()` method is async to support PKCS#11 tokens that may block on hardware operations. The certificate methods let the CA engine build complete chains without separately tracking which certificate belongs to which signer. The implementations are:
 
 | Implementation | Backend | Algorithms | Use Case |
 |---|---|---|---|
@@ -170,7 +176,7 @@ key_label = "ca-signing-key"
 
 This is where Rust's type system pays dividends. The `Signer` trait is object-safe, so the CA engine stores `Arc<dyn Signer>` --- a reference-counted pointer to whatever implementation was selected at startup. There is no `if hsm { ... } else { ... }` sprinkled through the certificate issuance code. The signing backend is decided once, at process startup, and the rest of the system is oblivious.
 
-## What 49,000 Lines Gets You
+## What 55,000 Lines Gets You
 
 The complete feature set, as of this writing:
 
@@ -197,6 +203,10 @@ The complete feature set, as of this writing:
 - CoAP/DTLS (RFC 9148) --- constrained IoT devices
 - SPIFFE/SPIRE --- Kubernetes workload identity
 - Dogtag compatibility proxy --- drop-in replacement for FreeIPA
+
+**Transparency**
+- Certificate Transparency (RFC 6962) with embedded CT log, Merkle tree, and SCT generation
+- Merkle Tree Certificates ([draft-ietf-plants-merkle-tree-certs](https://datatracker.ietf.org/doc/draft-ietf-plants-merkle-tree-certs/)) --- opt-in issuance mode replacing per-certificate signatures with Merkle inclusion proofs (~736 bytes vs 3,309 bytes for ML-DSA-65)
 
 **Operations**
 - HMAC-chained audit logs (Common Criteria FAU_STG.2 tamper evidence)

@@ -1,7 +1,7 @@
 ---
 title: "PKI.Next Part 5: One CA, Six Protocols"
-date: 2026-05-07
-draft: true
+date: 2026-05-12
+draft: false
 tags: ["pki", "est", "acme", "coap", "spiffe", "certificates", "security", "protocols", "pki-next"]
 description: "How PKI.Next serves EST, ACME, CoAP, SPIFFE/SPIRE, HashiCorp Vault, and Dogtag compatibility from a single CA using the Registration Authority pattern — and why protocol diversity is the future of PKI."
 series: ["PKI.Next"]
@@ -29,11 +29,11 @@ graph TB
     end
 
     subgraph "Protocol Servers (DMZ / Edge)"
-        acme["ACME Server<br/><i>RFC 8555</i><br/>Port 8448"]
-        est["EST Server<br/><i>RFC 7030</i><br/>Port 8445"]
+        acme["ACME Server<br/><i>RFC 8555</i><br/>Port 8447"]
+        est["EST Server<br/><i>RFC 7030</i><br/>Port 8444"]
         coap["CoAP Server<br/><i>RFC 9148</i><br/>Port 5684"]
-        spire["SPIRE Server<br/><i>SPIFFE</i><br/>Unix Socket"]
-        vault_srv["Vault Server<br/><i>Key Escrow</i><br/>Port 8200"]
+        spire["SPIRE Server<br/><i>SPIFFE</i><br/>Port 8448"]
+        vault_srv["Vault Server<br/><i>Key Escrow</i><br/>Port 8446"]
         dogtag["Dogtag Compat<br/><i>API Proxy</i><br/>Port 8080"]
     end
 
@@ -92,18 +92,16 @@ ca_cert = "/etc/pki/ra/ca-cert.pem"
 The RA client provides typed methods for CA operations:
 
 ```rust
-// Submit a certificate request
-let response = ra_client.submit_request(
-    &csr_pem,
-    "serverCert",     // profile ID
-    metadata,          // device info, requestor
+// Enroll: submit CSR and receive issued certificate in one call
+let cert = ra_client.enroll(
+    &csr_der,
+    Some("serverCert"),      // profile ID
+    Some("est-server"),      // requestor identity
+    Some(&device_metadata),  // device info
 ).await?;
-
-// Auto-approve (for auto-enrollment profiles)
-let cert = ra_client.approve_request(&request_id).await?;
 ```
 
-For profiles configured with `auth_method = "auto"`, the protocol server can submit and approve in one step. For agent-approved profiles, the protocol server submits the request and the certificate is issued only after an agent approves it through the dashboard or CLI.
+The `enroll()` method submits the CSR and returns the issued certificate in a single call. For profiles configured with auto-approval, this completes immediately. For agent-approved profiles, the CA queues the request and returns a `pending` status; the certificate is issued only after an agent approves it through the dashboard or CLI.
 
 ## EST: Enterprise Device Enrollment
 
@@ -366,14 +364,14 @@ All protocol servers are managed through the CA dashboard and CLI:
 rs-pki server register \
     --name "est-dmz-01" \
     --type est \
-    --base-url https://est.dmz.example.com:8445 \
+    --base-url https://est.dmz.example.com:8444 \
     --health-endpoint /healthz
 
 # Configure enrollment profile
 rs-pki server config set est-dmz-01 \
     --enrollment-profile serverCert \
     --require-client-cert true \
-    --listen-port 8445
+    --listen-port 8444
 
 # Health check
 rs-pki server health-check est-dmz-01
