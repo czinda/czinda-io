@@ -1,9 +1,9 @@
 ---
 title: "PKI.Next Part 2: Post-Quantum Certificates Are Here"
 date: 2026-05-01
-draft: true
-tags: ["pki", "post-quantum", "ml-dsa", "fips-204", "certificates", "security", "cryptography", "pki-next"]
-description: "How PKI.Next implements ML-DSA (FIPS 204) post-quantum signatures today, the engineering decisions behind dual-mode PQC support, and why your CA needs to be ready before the quantum threat arrives."
+draft: false
+tags: ["pki", "post-quantum", "ml-dsa", "fips-204", "certificates", "security", "cryptography", "pki-next", "merkle-tree-certificates", "mtc"]
+description: "How PKI.Next implements ML-DSA (FIPS 204) post-quantum signatures today, why Merkle Tree Certificates are the future of PQC-era TLS authentication, and the engineering decisions behind dual-mode PQC support."
 series: ["PKI.Next"]
 ---
 
@@ -32,12 +32,13 @@ timeline
     title Post-Quantum Cryptography Timeline
     2024 : NIST publishes FIPS 204 (ML-DSA)
          : NIST publishes FIPS 203 (ML-KEM)
+         : NIST publishes FIPS 205 (SLH-DSA)
     2025 : RFC 9881 - ML-DSA in X.509
          : RFC 9690 - ML-KEM in CMS
          : CNSA 2.0 mandates PQC for NSS
     2026 : First CAs issue ML-DSA certificates
          : PKI.Next ships PQC support
-    2027 : NIST expected to finalize SLH-DSA
+    2027 : Chrome MTC Phase 2 and 3 targeted
     2028 : Estimated hybrid transition period begins
     2030 : CNSA 2.0 deadline for software signing
     2033 : CNSA 2.0 deadline for all PKI signatures
@@ -251,26 +252,31 @@ The `--insecure` flag disables rustls certificate verification, allowing the CLI
 
 For inter-service communication (protocol servers to CA API), the same approach applies. The RA client can be configured to trust the ML-DSA CA certificate directly, bypassing the TLS library's signature verification for the CA chain while still performing all other TLS checks.
 
-This situation will improve as TLS libraries add PQC support. OpenSSL 3.5 (expected 2026) includes ML-DSA support via the `oqs-provider`, and rustls has an [open RFC](https://github.com/rustls/rustls/issues/1930) for post-quantum signature verification.
+This situation will improve as TLS libraries add PQC support. [OpenSSL 3.5](https://openssl-library.org/post/2025-04-08-openssl-35-final-release/) (released April 2025) includes ML-DSA support via the `oqs-provider`, and rustls has an [open RFC](https://github.com/rustls/rustls/issues/1930) for post-quantum signature verification.
 
 ## Bootstrapping a PQC CA
 
-The `rs-pki ca init` command can bootstrap a CA directly on a PKCS#11 token with ML-DSA:
+The `rs-pki ca init` command bootstraps a CA on a PKCS#11 token. For classical algorithms, this is a single command:
 
 ```bash
 rs-pki ca init \
-    --pkcs11-module /usr/lib/libkryoptic.so \
-    --pkcs11-slot 0 \
-    --hsm-pin 12345678 \
-    --key-label "pqc-ca-key" \
-    --algorithm ML-DSA-65 \
-    --subject "CN=PQC Test CA,O=Example,C=US" \
+    --pkcs11-module /usr/lib/libkryoptic_pkcs11.so \
+    --token-dir /var/lib/pki/tokens \
+    --so-pin 12345678 \
+    --user-pin 87654321 \
+    --key-label "ca-signing" \
+    --algorithm ecdsa-p256 \
+    --subject "CN=PKI.Next Root CA,O=Example,C=US" \
     --validity-days 3650
 ```
 
-This generates an ML-DSA-65 key pair on the PKCS#11 token and creates a self-signed CA certificate. The key never leaves the token --- generation and signing both happen through PKCS#11 calls.
+For ML-DSA, the bootstrapping workflow is different. The `ca init` command currently supports classical algorithms (`ecdsa-p256`, `ecdsa-p384`, `rsa`, `ed25519`); ML-DSA key generation and CA certificate creation use OpenSSL 3.5 and PKCS#11 token import. The `setup-kryoptic.sh` script in the repository demonstrates this end-to-end workflow:
 
-For tokens that do not support on-token ML-DSA key generation (the `CKM_ML_DSA_KEY_PAIR_GEN` mechanism), the key must be generated externally and imported. The `setup-kryoptic.sh` script in the repository demonstrates this workflow using OpenSSL 3.5's ML-DSA support.
+1. Generate an ML-DSA-65 key pair with OpenSSL 3.5
+2. Import the key into a Kryoptic PKCS#11 token
+3. Create a self-signed CA certificate using the token-resident key
+
+Once the ML-DSA CA key is on the token, all subsequent signing operations --- certificate issuance, CRL generation, OCSP response signing --- go through the same `Pkcs11Signer` code path as any other algorithm. The key never leaves the token after import.
 
 ## Size Impact in Practice
 
@@ -293,13 +299,44 @@ The OCSP impact is where CRL sharding pays dividends. As discussed in a [previou
 
 ML-DSA is the beginning, not the end. Several developments are on the horizon:
 
+**Merkle Tree Certificates** ([draft-ietf-plants-merkle-tree-certs](https://datatracker.ietf.org/doc/draft-ietf-plants-merkle-tree-certs/)) are the most significant architectural response to the size problem discussed above. The numbers in the previous section --- 52x larger signatures, 10x larger certificates, compounding overhead in TLS handshakes --- are not theoretical concerns. Google, Cloudflare, and the IETF's new [PLANTS working group](https://datatracker.ietf.org/wg/plants/about/) are standardizing a fundamentally different certificate architecture that eliminates per-certificate signatures entirely.
+
+In traditional Certificate Transparency (RFC 6962/9162), CAs issue signed certificates and then submit them to independent CT logs. The transparency is bolted on after issuance. MTC inverts this: the CA maintains its own issuance log as a Merkle tree, and a certificate's "signature" is an inclusion proof in that tree. The X.509 `signatureAlgorithm` is set to `id-alg-mtcProof`, and the `signatureValue` contains a Merkle path plus optional cosigner signatures --- not a traditional cryptographic signature.
+
+The size savings are dramatic. With ML-DSA-65, a traditional certificate chain carries ~6,600 bytes of signature data in the TLS handshake (two signatures at 3,309 bytes each for end-entity + intermediate). An MTC inclusion proof for a tree with ~4.4 million certificates is roughly **736 bytes** --- a Merkle path of ~23 SHA-256 hashes. Google's [February 2026 announcement](https://groups.google.com/g/certificate-transparency/c/w0sUcZ7FO0g) described shrinking post-quantum TLS authentication from ~14,700 bytes to as little as 736 bytes.
+
+{{< mermaid >}}
+graph LR
+    subgraph "Traditional PQC Certificate"
+        tc_sig["ML-DSA-65 Signature<br/><i>3,309 bytes</i>"]
+        tc_chain["+ Intermediate Sig<br/><i>3,309 bytes</i>"]
+        tc_total["<b>~6,600 bytes</b><br/><i>signatures alone</i>"]
+    end
+    subgraph "Merkle Tree Certificate"
+        mtc_proof["Inclusion Proof<br/><i>~23 × 32 bytes</i>"]
+        mtc_total["<b>~736 bytes</b><br/><i>entire auth path</i>"]
+    end
+
+    tc_sig --> tc_chain --> tc_total
+    mtc_proof --> mtc_total
+
+    style tc_total fill:#fff3cd
+    style mtc_total fill:#d4edda
+{{< /mermaid >}}
+
+The CA's role changes fundamentally with MTC. Instead of signing individual certificates, the CA appends entries to its issuance log, periodically signs a checkpoint (the tree head), and derives certificates from inclusion proofs against that checkpoint. External cosigners --- playing the role that CT logs play today --- verify the tree's append-only property and provide a quorum of evidence that the checkpoint is globally consistent. PKI.Next implements MTC as an opt-in issuance mode. The `pki-ct` crate provides the compact Merkle tree with frontier-based append, inclusion proofs, and consistency proofs. The `mtc_engine` module in `pki-ca` handles the inverted issuance flow: reserve a log index (which becomes the serial number), build the TBS certificate, append a `TBSCertificateLogEntry` (SPKI replaced with its SHA-256 hash) to the tree, compute the inclusion proof, and wrap the certificate with `id-alg-mtcProof` instead of a cryptographic signature. Enabling MTC is a single configuration flag --- `[mtc] enabled = true` --- and traditional signed issuance continues to work alongside it.
+
+Chrome has designated MTC as its [preferred path for post-quantum certificates](https://postquantum.com/security-pqc/googles-merkle-tree-mtc-https/), with Phase 1 (live feasibility with Cloudflare, ~1,000 certs) underway since early 2026, Phase 2 (public infrastructure bootstrap) targeted for Q1 2027, and Phase 3 (Chrome Quantum-resistant Root Store) targeted for Q3 2027. [DigiCert has open-sourced](https://www.digicert.com/blog/digicert-mtc-playground) an MTC playground implementation. The CA/Browser Forum's Ballot SC-081v3 is simultaneously shrinking TLS certificate lifetimes to 47 days by 2029, which further motivates MTC's batch-issuance model over individual per-certificate signatures.
+
+For CA developers, the takeaway is this: MTC is not an incremental change to certificate issuance. It requires the CA to maintain a persistent, append-only log as a first-class data structure, support the `id-alg-mtcProof` signature algorithm in certificate building, implement a cosigner protocol for third-party tree verification, and support landmark-based signatureless certificates for up-to-date relying parties. PKI.Next's architecture --- trait-based signing backends, a dedicated `pki-ct` crate, and the RA pattern for protocol isolation --- absorbed this change in under 2,000 lines of new code across five crates, with zero modifications to the `Signer` trait or any existing protocol server.
+
 **Composite certificates** (draft-ietf-lamps-pq-composite-sigs) would embed both a classical and a post-quantum signature in a single certificate. This provides quantum resistance while maintaining backward compatibility with relying parties that do not understand ML-DSA. PKI.Next's `Signer` trait is designed to support this --- a composite signer would wrap two inner signers and concatenate their outputs.
 
 **SLH-DSA** (FIPS 205, formerly SPHINCS+) is a hash-based signature scheme that does not rely on lattice assumptions. It is slower and produces larger signatures than ML-DSA, but its security is based on simpler, better-understood assumptions. SLH-DSA is already compiled into Kryoptic and could be added to PKI.Next with minimal code changes.
 
 **ML-KEM** (FIPS 203) for key encapsulation is relevant for key escrow profiles. PKI.Next's Dogtag-compatible `caStorageCert` profile already references ML-KEM-768 and ML-KEM-1024 for key transport, anticipating the need to protect archived keys against quantum recovery.
 
-The concrete takeaway: if you are building or operating a CA today, the time to add PQC support is now, even if you are not issuing PQC certificates in production yet. The engineering work --- algorithm abstraction, key format handling, size-aware protocol design --- is substantial, and doing it under time pressure when quantum computers arrive is not a plan.
+The concrete takeaway: if you are building or operating a CA today, the time to add PQC support is now, even if you are not issuing PQC certificates in production yet. The engineering work --- algorithm abstraction, key format handling, size-aware protocol design, and now Merkle tree certificate infrastructure --- is substantial, and doing it under time pressure when quantum computers arrive is not a plan.
 
 ---
 
