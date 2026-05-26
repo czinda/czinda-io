@@ -156,30 +156,23 @@ Rate limiting is applied at 10 requests per second sustained, 30 burst --- suffi
 PKI.Next's ACME server goes beyond basic RFC 8555 with Multi-Perspective Issuance Corroboration (MPIC):
 
 {{< mermaid >}}
-graph TB
-    subgraph "ACME Order Flow"
-        order["1. Client creates order<br/><code>POST /acme/new-order</code>"]
-        authz["2. Server returns authorizations<br/><i>DNS-01 or HTTP-01 challenge</i>"]
-        challenge["3. Client provisions challenge<br/><i>DNS TXT record or HTTP token</i>"]
-        validate["4. Server validates from multiple vantage points"]
-        finalize["5. Client submits CSR<br/><code>POST /acme/finalize</code>"]
-        cert["6. Server returns certificate<br/><code>GET /acme/cert</code>"]
-    end
-
-    subgraph "MPIC Validation"
-        na["North America<br/>ARIN"]
-        eu["Europe<br/>RIPE NCC"]
-        ap["Asia-Pacific<br/>APNIC"]
-        la["Latin America<br/>LACNIC"]
-        af["Africa<br/>AFRINIC"]
-    end
+flowchart TB
+    order["1. Client creates order<br/><i>POST /acme/new-order</i>"]
+    authz["2. Server returns authorizations<br/><i>DNS-01 or HTTP-01 challenge</i>"]
+    challenge["3. Client provisions challenge<br/><i>DNS TXT record or HTTP token</i>"]
+    validate["4. Server validates from multiple vantage points"]
+    finalize["5. Client submits CSR<br/><i>POST /acme/finalize</i>"]
+    cert["6. Server returns certificate<br/><i>GET /acme/cert</i>"]
 
     order --> authz --> challenge --> validate --> finalize --> cert
-    validate --> na
-    validate --> eu
-    validate --> ap
-    validate --> la
-    validate --> af
+
+    subgraph mpic ["MPIC Validation"]
+        direction LR
+        na["North America<br/>ARIN"] ~~~ eu["Europe<br/>RIPE NCC"] ~~~ ap["Asia-Pacific<br/>APNIC"] ~~~ la["Latin America<br/>LACNIC"] ~~~ af["Africa<br/>AFRINIC"]
+    end
+
+    validate -."validates from".-> mpic
+    mpic ~~~ finalize
 
     style validate fill:#fff3cd
 {{< /mermaid >}}
