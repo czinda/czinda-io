@@ -1,254 +1,368 @@
 ---
-title: "kipuka: Building an EST Server and Its Infrastructure in a Day"
+title: "kipuka: An EST Enrollment Server Built for Enterprise PKI"
 date: 2026-06-25
 draft: false
-tags: ["pki", "est", "rust", "cloudflare", "containers", "documentation", "infrastructure", "kipuka"]
-description: "How I built an RFC 7030 EST enrollment server in Rust, then stood up its entire public infrastructure — project site, documentation, container registry, and API reference — on Cloudflare's edge in a single session."
+tags: ["pki", "est", "rust", "certificates", "security", "hsm", "enterprise", "kipuka", "rfc-7030"]
+description: "Enterprise certificate enrollment shouldn't require a monolithic CA. kipuka is a Rust-based EST server with multi-CA failover, HSM key protection, and NIAP compliance — designed to fit into the PKI you already have."
 series: ["PKI.Next"]
 ---
 
-There's a particular kind of momentum that happens when every piece clicks
-into place. Yesterday I built [kipuka](https://kipuka.dev), an EST (RFC 7030)
-enrollment server in Rust, and then — in the same session — stood up the
-entire public infrastructure around it: a project site, comprehensive
-documentation, an OCI container registry, and API reference docs. All on
-Cloudflare's edge, all under a single domain.
+Enterprise certificate enrollment has a tooling problem.
 
-This post covers the technical decisions behind each layer.
+Most organizations run a certificate authority — often Red Hat Certificate
+System (Dogtag), Microsoft AD CS, or EJBCA — but getting certificates onto
+devices, servers, and workloads still involves brittle SCEP integrations,
+custom scripts, or manual CSR submission. The enrollment layer is the weak
+link.
 
-## What kipuka does
+[EST (Enrollment over Secure Transport)](https://www.rfc-editor.org/rfc/rfc7030)
+was designed to fix this. Published as RFC 7030 in 2013, it replaces SCEP
+with a modern HTTPS-based protocol that supports mutual TLS, one-time
+passwords, and integration with existing CAs. But production-ready EST
+implementations remain scarce — especially ones that meet government and
+enterprise compliance requirements.
 
-EST (Enrollment over Secure Transport, [RFC 7030](https://www.rfc-editor.org/rfc/rfc7030))
-is the modern replacement for SCEP in enterprise PKI. It standardizes how
-devices request and renew X.509 certificates over HTTPS. kipuka implements
-the core EST operations with multi-CA high availability, HSM key protection,
-and NIAP CA Protection Profile compliance.
+[kipuka](https://kipuka.dev) is an EST enrollment server built specifically
+for this gap.
 
-The name comes from Hawaiian geology: a *kipuka* is an area of older land
-surrounded by younger lava flows — an island of stability. It felt right
-for a certificate enrollment service that needs to be the most reliable
-thing in the room.
+## The problem kipuka solves
 
-The server is built on:
+If you're running enterprise PKI today, you probably recognize these pain
+points:
 
-| Component | Role |
-|-----------|------|
-| [axum](https://docs.rs/axum) | HTTP/TLS server |
-| [sqlx](https://docs.rs/sqlx) | Database (SQLite, PostgreSQL, MariaDB) |
-| [synta](https://codeberg.org/abbra/synta) | ASN.1/X.509 certificate operations |
-| [rustls](https://docs.rs/rustls) | TLS with mTLS client auth |
-| [cryptoki](https://docs.rs/cryptoki) | PKCS#11 HSM integration |
+**Enrollment is fragmented.** Your CA issues certificates, but the enrollment
+path varies by device type. Network equipment uses SCEP. Mobile devices use
+profiles. Servers use custom scripts or Certmonger. Each path has its own
+authentication story, its own failure modes, and its own monitoring gaps.
 
-The architecture is a Cargo workspace with six internal crates — `kipuka-est`
-(protocol), `kipuka-hsm` (PKCS#11), `kipuka-otp` (one-time passwords),
-`kipuka-util` (shared types), `kipuka-dogtag` (Red Hat Certificate System
-client), and `kipuka-coap` (constrained device transport, in progress).
+**SCEP is showing its age.** It was designed for a world of pre-shared
+secrets and HTTP polling. It has no native mTLS support, no standard renewal
+mechanism, and
+[known security weaknesses](https://www.rfc-editor.org/rfc/rfc7030#section-1)
+that RFC 7030 was explicitly designed to address.
 
-## The kipuka.dev stack
+**Compliance requirements are tightening.** NIAP's CA Protection Profile
+demands specific audit trail requirements (FAU_GEN.1), cryptographic module
+standards (FCS_CKM.1), and authentication failure handling (FIA_AFL.1). The
+CA/B Forum's Baseline Requirements are shortening certificate validity from
+398 days to 47 days by 2029. Meeting these with ad-hoc enrollment scripts
+isn't sustainable.
 
-Once the server was working, I wanted a proper public home for it. Here's
-what I built and why each piece exists.
+**CA coupling creates fragility.** When your enrollment logic is embedded in
+your CA, a CA outage means no enrollment. When your enrollment server can
+only talk to one CA vendor, you're locked in.
 
-### Landing page — static HTML on Cloudflare Pages
+kipuka addresses these by providing a dedicated EST enrollment layer that
+sits in front of your existing CA infrastructure.
 
-No framework. No build step. One `index.html` with inline CSS, deployed via
-`wrangler pages deploy`. The design is dark (`#0d1117` background) with amber
-(`#f0883e`) accents — a technical aesthetic that matches the PKI/security
-space.
+## What kipuka is
 
-```bash
-wrangler pages deploy . --project-name=kipuka-dev --branch=main
-```
+kipuka is a Rust-based EST server that implements the core
+[RFC 7030](https://www.rfc-editor.org/rfc/rfc7030) enrollment operations:
 
-Cloudflare Pages serves static files from 300+ edge locations with free
-unlimited bandwidth. The custom domain (`kipuka.dev`) was configured via the
-Pages API — Cloudflare auto-provisioned the SSL certificate via Google CA
-since the zone was already in my account.
+| Operation | Path | Purpose |
+|-----------|------|---------|
+| CA Certs | `GET /cacerts` | Retrieve the CA certificate chain (no auth) |
+| Simple Enroll | `POST /simpleenroll` | Initial certificate enrollment |
+| Simple Re-enroll | `POST /simplereenroll` | Certificate renewal with mTLS |
+| Full CMC | `POST /fullcmc` | Complex enrollment via RFC 5272 CMC |
 
-The landing page went through several iterations. I started by modeling it
-after [akamu.dev](https://akamu.dev) (the ACME server that inspired kipuka's
-architecture), adding hero CTA buttons, a terminal-style startup output
-block, a stats callout section, and a two-column footer.
+Server-side key generation (`/serverkeygen`) and CSR attribute advertisement
+(`/csrattrs`) are in active development.
 
-### Documentation — mdBook
+The name comes from Hawaiian geology. A *kipuka* is an area of older,
+established land surrounded by younger lava flows — an island of stability
+in a changing landscape. It seemed right for a service whose job is to be
+the most reliable thing in the certificate lifecycle.
 
-For comprehensive docs, I used [mdBook](https://rust-lang.github.io/mdBook/),
-the standard documentation tool for Rust projects. It generates static HTML
-with built-in search, dark/light theme toggle, chapter navigation, and print
-support.
+## Designed for enterprise PKI
 
-The documentation is organized into five sections for three audiences:
+kipuka isn't a standalone CA. It's an enrollment frontend that integrates
+with the CA infrastructure you already run.
 
-| Section | Audience | Pages |
-|---------|----------|-------|
-| Quick Start | New users | Installation, First Run, First Certificate |
-| Operator Guide | Admins | Configuration, CAs, Auth, HSM, HA, Database, Audit |
-| Compliance | Security teams | RFC Support, NIAP, CA/B Forum, HSM Matrix |
-| API Reference | Developers | EST Endpoints, Admin API, Rust API |
-| Developer Guide | Contributors | Architecture, Testing, Migrations |
+### Multi-CA with automatic failover
 
-The key design decision was **unified theming**. mdBook's default Navy theme
-doesn't match the landing page. I wrote a custom CSS overlay
-(`doc/theme/custom.css`) that maps every mdBook element — sidebar, code
-blocks, tables, scrollbars — to the same `#0d1117` / `#f0883e` palette. A
-small JavaScript file injects a "← kipuka.dev" link at the top of the sidebar
-for navigation back to the main site.
+Most enterprises don't run a single CA. They have an RSA issuing CA, an
+ECDSA issuing CA, maybe a separate CA for device certificates. Some run
+geographically distributed CAs for latency or regulatory reasons.
+
+kipuka supports multiple CA backends with four failover strategies:
 
 ```toml
-# book.toml
-[output.html]
-default-theme = "navy"
-additional-css = ["theme/custom.css"]
-additional-js = ["theme/home-link.js"]
+[ha]
+enabled = true
+strategy = "active-passive"   # or round-robin, weighted, latency-based
+check_interval = "30s"
+failure_threshold = 3
+
+[[ha.group]]
+name = "rsa-issuers"
+ca_ids = ["rsa-ca-east", "rsa-ca-west"]
+strategy = "latency-based"
 ```
 
-### API reference — cargo doc with theme override
+A circuit breaker tracks CA health through five states — Healthy, Degraded,
+Unhealthy, CircuitOpen, and Recovering — with configurable thresholds and
+cooldown periods. When a CA goes down, enrollment continues through the next
+healthy backend. No manual intervention required.
 
-The Rust API reference is generated by `cargo doc --workspace --no-deps` and
-hosted at `/api/`. Rustdoc supports CSS injection via `--extend-css` and HTML
-injection via `--html-in-header`:
+### EST labels for certificate profiles
+
+Different use cases need different certificate profiles. A TLS server cert
+needs `serverAuth` EKU and SAN enforcement. A client auth cert needs
+`clientAuth` and stricter key type constraints. A device cert might have a
+longer validity and a Subject DN pattern requirement.
+
+EST labels let you expose these as separate enrollment paths:
+
+```toml
+[[est.label]]
+name = "server-tls"
+ca_id = "rsa-ca"
+allowed_key_types = ["rsa:2048", "rsa:4096", "ec:p256", "ec:p384"]
+required_ext_key_usage = ["serverAuth"]
+max_validity_days = 398
+require_san = true
+
+[[est.label]]
+name = "client-auth"
+ca_id = "ecdsa-ca"
+allowed_key_types = ["ec:p256", "ec:p384"]
+required_ext_key_usage = ["clientAuth"]
+
+[[est.label]]
+name = "device"
+ca_id = "rsa-ca"
+subject_pattern = "CN=device-.*,O=Example Corp"
+max_validity_days = 825
+```
+
+Clients enroll against `/.well-known/est/server-tls/simpleenroll` or
+`/.well-known/est/device/simpleenroll`. Each label enforces its profile
+constraints independently.
+
+### HSM key protection via PKCS#11
+
+CA private keys belong in a hardware security module. kipuka integrates with
+HSMs via the PKCS#11 standard, with tested support for enterprise-grade
+hardware:
+
+| Vendor | Model | FIPS Level |
+|--------|-------|------------|
+| Entrust | nShield Connect/Solo | 140-3 Level 3 |
+| Utimaco | CryptoServer Se/CP5 | 140-3 Level 3 |
+| Thales | Luna 7 (CSP11/TCT) | 140-3 Level 3 |
+| Kryoptic | SoftHSM-compatible | Development/test |
+
+Key material never leaves the HSM boundary. kipuka handles session
+management, connection pooling, and health checking against the PKCS#11
+interface. PIN management supports environment variables (preferred for
+containers) and secured files — never plaintext in configuration.
+
+### Red Hat Certificate System (Dogtag) integration
+
+For organizations running Red Hat Certificate System, kipuka includes a
+native REST API client that delegates enrollment to Dogtag. This gives you
+EST protocol support in front of your existing Dogtag infrastructure without
+modifying the CA:
+
+- **Profile-based enrollment** — map EST labels to Dogtag certificate profiles
+- **Full CMC passthrough** — RFC 5272 requests forwarded directly to Dogtag's CMC endpoint
+- **KRA integration** — server-side key generation with Key Recovery Authority escrow
+- **Multi-instance pooling** — connect to multiple Dogtag instances with circuit breaker failover
+
+This is particularly relevant for RHEL and IdM environments where Dogtag is
+already the CA of record.
+
+### Authentication
+
+kipuka supports three authentication methods, selectable per deployment:
+
+**OTP (One-Time Passwords)** — for initial enrollment. Tokens are generated
+via the admin API, hashed with argon2id before storage, and validated with
+timing-safe comparison. Rate limiting protects against brute-force attempts.
+Minimum token length is 16 characters for NIAP compliance.
+
+**mTLS (Mutual TLS)** — for certificate renewal. The client presents its
+existing certificate during the TLS handshake. kipuka validates the
+certificate chain against configured trust anchors and allows re-enrollment
+without additional credentials.
+
+**GSSAPI/Kerberos** — for enterprise SSO environments. Protocol structure is
+in place (SPNEGO, channel binding, principal mapping); FFI integration with
+libgssapi is planned.
+
+### Compliance mapping
+
+kipuka is designed with specific compliance frameworks in mind:
+
+**NIAP CA Protection Profile v2.0** — security functional requirements are
+mapped to implementation:
+- FAU_GEN.1/2: structured audit trail with authenticated identity on every event
+- FCS_CKM.1: key generation via PKCS#11 or CSPRNG with 64+ bit serial numbers
+- FIA_AFL.1: rate limiting with lockout and audit on authentication failure
+- FTP_TRP.1: EST over TLS 1.2+ with mTLS, admin API on separate TLS endpoint
+
+**CA/B Forum Baseline Requirements** — certificate profiles enforce:
+- Serial numbers: 160 bits from CSPRNG (exceeds the 64-bit minimum)
+- Key constraints: RSA ≥2048, ECDSA P-256/P-384
+- Validity tracking: 398 days today, with configuration for the
+  [upcoming reductions](https://cabforum.org/2025/03/ballot-sc-081/)
+  (200 days in 2026, 100 in 2027, 47 in 2029)
+
+The full compliance mapping is in the
+[documentation](https://kipuka.dev/doc/compliance/niap.html).
+
+## How it's built
+
+kipuka is written in Rust, chosen for memory safety in a security-critical
+service that handles private keys and cryptographic operations.
+
+The architecture is a Cargo workspace with six crates:
+
+```
+                      Clients
+                        |
+                   TLS + mTLS/OTP
+                        |
+                +-------+-------+
+                |   kipuka-est  |     axum routes, EST protocol
+                +---+---+---+---+
+                    |   |   |
+          +---------+   |   +---------+
+          |             |             |
+     kipuka-otp    kipuka-hsm    kipuka-util
+     OTP lifecycle  PKCS#11      shared types
+                    HSM ops         & config
+          |             |
+          |        kipuka-dogtag
+          |         Dogtag PKI
+          |         REST client
+          |
+     +----+----+       kipuka-coap
+     |   sqlx  |       CoAP transport
+     | sqlite  |       (planned)
+     | postgres|
+     | mariadb |
+     +---------+
+```
+
+Each crate has a clear responsibility boundary. `kipuka-est` handles EST
+protocol routing and certificate issuance. `kipuka-hsm` abstracts PKCS#11
+operations. `kipuka-otp` manages token lifecycle with timing-safe
+validation. `kipuka-dogtag` is a standalone Dogtag REST client that could
+be reused independently.
+
+The database layer supports three backends — SQLite for single-node
+deployments, PostgreSQL for production clusters, and MariaDB for existing
+Galera environments — switchable with a single configuration line.
+
+### Audit logging
+
+Every security-relevant event is recorded to an append-only audit trail
+compliant with NIAP FAU_GEN.1. Twenty-one event types cover the certificate
+lifecycle (issuance, renewal, revocation), authentication (success, failure,
+lockout), and administrative operations (OTP provisioning, CA health
+changes).
+
+Events are always stored in the database. Optional destinations include
+file-based JSON lines (append-only) and syslog over TLS for integration
+with enterprise SIEM platforms.
+
+## Getting started
+
+The fastest path is the container image:
 
 ```bash
-RUSTDOCFLAGS="--default-theme=ayu \
-  --extend-css api-theme.css \
-  --html-in-header api-header.html" \
-  cargo doc --workspace --no-deps
+# Pull the image (no login required)
+podman pull registry.kipuka.dev/kipuka:latest
+
+# Run with your configuration
+podman run --rm \
+  -v ./kipuka.toml:/etc/kipuka/kipuka.toml:ro \
+  -v ./certs:/etc/kipuka/certs:ro \
+  -p 9443:9443 \
+  registry.kipuka.dev/kipuka:latest
 ```
 
-The `api-theme.css` overrides rustdoc's CSS custom properties (`:root`
-variables) to match the kipuka palette. The `api-header.html` injects a
-sticky "← kipuka.dev" banner at the top of every page. This gives visual
-continuity across the landing page, docs, and API reference — they all look
-like the same site.
-
-### Container registry — Cloudflare Workers + R2
-
-This was the most interesting piece. I wanted `podman pull
-registry.kipuka.dev/kipuka:latest` to work — with anonymous pulls, no
-login required — without running a registry server anywhere.
-
-The solution: [Cloudflare's serverless-registry](https://github.com/cloudflare/serverless-registry),
-a Worker that implements the OCI distribution spec with R2 object storage as
-the backend. R2's killer feature is **zero egress fees** — pull the image a
-thousand times and the bandwidth cost is $0.00.
+Or build from source:
 
 ```bash
-# Create the R2 bucket
-wrangler r2 bucket create kipuka-registry
-
-# Deploy the Worker
-wrangler deploy --env production
-
-# Set push credentials
-wrangler secret put USERNAME --env production
-wrangler secret put PASSWORD --env production
+git clone https://codeberg.org/czinda/kipuka
+cd kipuka
+cargo build --release
+cp kipuka.toml.example kipuka.toml
+cargo run --release -- --config kipuka.toml
 ```
 
-I patched the Worker's `index.ts` to support anonymous pulls while requiring
-authentication for pushes. The key insight is that the OCI auth flow starts
-at `/v2/` — if that endpoint returns 200 without a challenge, the container
-client assumes the entire registry is anonymous and won't send credentials
-on POST requests. The fix:
+A minimal configuration needs four things: a listen address, a TLS
+certificate, a database, and a CA:
 
-```typescript
-// Allow anonymous GET/HEAD on manifest and blob paths,
-// but always require auth on /v2/ (so clients discover
-// credentials) and on all write methods.
-const isV2Root = url.pathname === "/v2/" || url.pathname === "/v2";
-const isReadOnly = request.method === "GET" || request.method === "HEAD";
-const hasAuth = request.headers.has("Authorization");
-const skipAuth = isReadOnly && !isV2Root && !hasAuth;
+```toml
+[server]
+listen = "0.0.0.0:9443"
+
+[tls]
+cert = "/etc/kipuka/tls/server.pem"
+key = "/etc/kipuka/tls/server.key"
+
+[tls.client_auth]
+trust_anchors = "/etc/kipuka/tls/client-ca.pem"
+
+[db]
+url = "sqlite:///var/lib/kipuka/kipuka.db"
+
+[[ca]]
+id = "main"
+cert = "/etc/kipuka/ca/ca.pem"
+key = "/etc/kipuka/ca/ca.key"
 ```
 
-The registry is served at `registry.kipuka.dev` via a Workers custom domain.
-The CI pipeline pushes to both the GitLab registry and kipuka.dev on every
-main branch build using Kaniko's multi-destination support.
+The [documentation](https://kipuka.dev/doc/) covers installation,
+first-run walkthrough, certificate enrollment, and the full configuration
+reference.
 
-## Honest feature reporting
+## Current status and roadmap
 
-After building the site with comprehensive feature claims, I ran a code audit
-against every claim on the landing page. The results were sobering:
+kipuka is under active development. Here's what works today and what's
+coming:
 
-| Feature | Claimed | Actual |
-|---------|---------|--------|
-| "All six EST operations" | ✓ | 4 of 6 — serverkeygen stubbed, csrattrs returns empty |
-| "Post-Quantum Ready" | ✓ | Config-only — ML-DSA not in the signing path |
-| "GSSAPI/Kerberos" | ✓ | Returns "not yet implemented" |
-| CoAP (RFC 7252) | ✓ | Skeleton — error types only |
-| OCSP responder | ✓ | Skeleton — protocol not implemented |
+**Implemented:**
+- Certificate enrollment and renewal (simpleenroll, simplereenroll)
+- Full CMC enrollment (RFC 5272)
+- STAR short-term auto-renewal state machine (RFC 8739)
+- Multi-CA with four HA failover strategies
+- PKCS#11 HSM integration (Entrust, Utimaco, Thales, Kryoptic)
+- Dogtag PKI REST client with multi-instance pooling
+- OTP authentication with timing-safe validation and rate limiting
+- mTLS client certificate authentication
+- SQLite, PostgreSQL, and MariaDB backends
+- NIAP-compliant structured audit logging
+- Admin API for OTP provisioning and CA management
+- PatternFly web dashboard
 
-I updated the site to be honest. The feature cards now say "Core EST
-operations" with server keygen "in progress." The PQC card was replaced with
-Dogtag PKI (which *is* fully implemented). The standards count dropped from 8
-to 6, with a "Planned" line for the rest.
+**In progress:**
+- Server-side key generation (`/serverkeygen`) with KRA integration
+- PKCS#7 SignedData encoding for `/cacerts` responses
+- CSR self-signature verification and proof-of-possession linking
+- GSSAPI/Kerberos authentication via libgssapi FFI
 
-What IS implemented and working: certificate enrollment and re-enrollment
-(simpleenroll, simplereenroll), Full CMC (RFC 5272), multi-CA failover with
-four strategies, PKCS#11 HSM integration, Dogtag PKI REST client, OTP
-authentication with timing-safe validation, SQLite/PostgreSQL/MariaDB
-backends, NIAP-compliant audit logging, admin API, and STAR renewal state
-machine.
+**Planned:**
+- OCSP responder
+- CoAP transport for constrained devices (RFC 7252)
+- Post-quantum signing (ML-DSA via FIPS 204)
+- Certificate transparency log submission
 
-Overclaiming features erodes trust. A user who tries `/serverkeygen` and
-gets an error will question everything else. Leading with what works builds
-credibility.
-
-## The full deployment
-
-Everything runs on Cloudflare's edge — no servers to maintain:
-
-| Service | Infrastructure | URL |
-|---------|---------------|-----|
-| Project site | Cloudflare Pages | [kipuka.dev](https://kipuka.dev) |
-| Documentation | Cloudflare Pages (mdBook) | [kipuka.dev/doc/](https://kipuka.dev/doc/) |
-| API reference | Cloudflare Pages (cargo doc) | [kipuka.dev/api/](https://kipuka.dev/api/) |
-| Container registry | Cloudflare Workers + R2 | [registry.kipuka.dev](https://registry.kipuka.dev) |
-
-The deploy workflow is a single chain:
-
-```bash
-# 1. Build API docs with unified theme
-RUSTDOCFLAGS="--default-theme=ayu \
-  --extend-css api-theme.css \
-  --html-in-header api-header.html" \
-  cargo doc --workspace --no-deps
-
-# 2. Build mdBook docs
-cd doc && mdbook build
-
-# 3. Assemble and deploy
-cp index.html favicon.svg deploy/
-cp -r doc-build deploy/doc
-cp -r target/doc deploy/api
-cd deploy && wrangler pages deploy .
-```
-
-The source for the website lives in a separate repo
-([kipuka-dev](https://gitlab.heebh.st/heebus/kipuka-dev)) from the server
-code ([kipuka](https://codeberg.org/czinda/kipuka)). The API docs are
-generated from the server repo and gitignored in the website repo — they're
-a build artifact, not source.
-
-## What's next
-
-The gaps identified in the code audit are the roadmap:
-
-1. **Server-side key generation** (`/serverkeygen`) — the most requested EST
-   operation after basic enrollment
-2. **PKCS#7 encoding** — cacerts currently returns raw DER instead of proper
-   PKCS#7 SignedData
-3. **CSR validation** — self-signature verification and POP linking
-4. **GSSAPI/Kerberos** — FFI to libgssapi for enterprise SSO
-5. **OCSP responder** — the infrastructure (caching, config) is in place,
-   the protocol implementation is next
-6. **Post-quantum signing** — ML-DSA integration into the actual signing path
-   via Synta and PKCS#11
-
-The infrastructure is in place. Now it's about filling in the protocol gaps.
+The container image is available at
+`registry.kipuka.dev/kipuka:latest` (x86_64 and arm64) with anonymous
+pulls — no registry login required.
 
 ---
 
-*kipuka is open source under GPL-3.0-or-later.
-[Source](https://codeberg.org/czinda/kipuka) ·
-[Documentation](https://kipuka.dev/doc/) ·
-[Container image](https://registry.kipuka.dev)*
+kipuka is open source under GPL-3.0-or-later.
+
+- [Project site](https://kipuka.dev)
+- [Documentation](https://kipuka.dev/doc/)
+- [API reference](https://kipuka.dev/api/)
+- [Source code](https://codeberg.org/czinda/kipuka)
+- [Container image](https://registry.kipuka.dev)
