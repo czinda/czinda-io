@@ -405,6 +405,42 @@ operations. `kipuka-otp` manages token lifecycle with timing-safe
 validation. `kipuka-dogtag` is a standalone Dogtag REST client that could
 be reused independently.
 
+### Built on Synta
+
+Every certificate operation in kipuka — parsing CSRs, building X.509
+certificates, encoding CMS SignedData, verifying OCSP responses, decoding
+Kerberos tickets — runs through
+[Synta](https://codeberg.org/abbra/synta), a schema-generated, zero-copy
+ASN.1 library.
+
+Most ASN.1 libraries in the Rust ecosystem use hand-coded structs to
+represent X.509 structures. Those structs work until the RFC adds a field,
+an optional extension changes semantics, or a vendor sends a certificate
+with a non-standard encoding. Then you're debugging struct mismatches
+against the specification.
+
+Synta takes a different approach. The X.509 structures in
+`synta-certificate` are compiled directly from the ASN.1 module
+definitions in [RFC 5280](https://www.rfc-editor.org/rfc/rfc5280). When a
+specification updates, the code is regenerated from the schema. The
+zero-copy decoder operates directly on the DER wire bytes without
+allocating intermediate structures, which matters when you're parsing
+certificate chains inside a DTLS handshake on a constrained device path.
+
+For kipuka, Synta provides:
+- **`synta-certificate`** — X.509 certificate building, CSR parsing, key
+  generation (including ML-DSA and ML-KEM), and chain validation
+- **`synta-cmc`** — CMS/CMC message parsing and SignedData verification
+  for the `/fullcmc` endpoint
+- **`synta-krb5`** — Kerberos AP-REQ ticket parsing for GSSAPI
+  authentication
+- **`synta`** core — DER/BER encoding and decoding for everything else
+
+This isn't a convenience dependency. Synta is the cryptographic
+substrate — the same library handles certificate operations across
+kipuka and [Akamu](https://codeberg.org/czinda/akamu), the ACME
+certificate authority described below.
+
 The database layer supports three backends — SQLite for single-node
 deployments, PostgreSQL for production clusters, and MariaDB for existing
 Galera environments — switchable with a single configuration line.
@@ -511,12 +547,98 @@ The container image is available at
 `registry.kipuka.dev/kipuka:latest` (x86_64 and arm64) with anonymous
 pulls — no registry login required.
 
+## Part of a larger PKI stack
+
+kipuka doesn't exist in isolation. It's one component of a Rust-based PKI
+stack designed to cover the full certificate lifecycle:
+
+{{< mermaid >}}
+graph LR
+    subgraph Foundation["Synta — ASN.1 & X.509 Foundation"]
+        S1["synta-certificate<br/>X.509, CSR, key generation"]
+        S2["synta-cmc<br/>CMS, CMC, SignedData"]
+        S3["synta-krb5<br/>Kerberos ticket parsing"]
+    end
+    subgraph Servers["Protocol Servers"]
+        K["kipuka<br/>EST / CMP / CoAP enrollment"]
+        A["Akamu<br/>ACME certificate authority"]
+    end
+    Foundation --> Servers
+{{< /mermaid >}}
+
+**[Synta](https://codeberg.org/abbra/synta)** is the foundation layer —
+a schema-generated ASN.1 library with sub-crates for X.509 certificates,
+CMS/CMC messages, Kerberos tickets, CBOR encoding, and X.509 path
+validation. Both kipuka and Akamu compile against it, so certificate
+parsing, signing, and verification use the same code regardless of which
+enrollment protocol the client speaks.
+
+**[Akamu](https://codeberg.org/czinda/akamu)** is a self-hosted ACME
+(RFC 8555) certificate authority for automated web PKI. It handles the
+other half of the enrollment problem — where kipuka serves enterprise
+devices that speak EST and CMP, Akamu serves infrastructure that speaks
+ACME: web servers, reverse proxies, Kubernetes ingress controllers, and
+anything else that uses certbot, acme.sh, or Caddy for automated
+certificate issuance.
+
+Akamu's feature set mirrors kipuka's enterprise focus:
+- **Full RFC 8555 ACME v2** — accounts, orders, authorizations, challenges,
+  and revocation
+- **Five challenge types** — `http-01`, `dns-01`, `tls-alpn-01`,
+  `dns-persist-01`, and `onion-csr-01`
+- **Post-quantum account keys** — ML-DSA-44/65/87 (FIPS 204)
+- **HSM CA keys** — PKCS#11 URI support, key material never leaves the
+  token
+- **Same database backends** — SQLite, PostgreSQL, MariaDB
+
+Together, kipuka and Akamu cover every major certificate enrollment
+protocol in production use today — EST, CMP, CoAP, and ACME — all built
+on the same Synta cryptographic substrate, all written in Rust.
+
+## Where PKI is heading
+
+The PKI landscape is shifting faster than it has in decades, and the
+changes are compounding:
+
+**Certificate lifetimes are collapsing.** The CA/B Forum has
+[voted](https://cabforum.org/2025/03/ballot-sc-081/) to reduce maximum
+certificate validity from 398 days to 200 days in 2026, 100 days in 2027,
+and 47 days by 2029. Organizations that rely on manual certificate
+management will not survive this transition. Automated enrollment — EST,
+ACME, or both — is no longer optional.
+
+**Post-quantum migration is real.** NIST finalized
+[ML-DSA (FIPS 204)](https://csrc.nist.gov/pubs/fips/204/final) and
+[ML-KEM (FIPS 203)](https://csrc.nist.gov/pubs/fips/203/final) in 2024.
+Federal agencies face mandates to inventory cryptographic assets and begin
+migration. The enrollment infrastructure needs to handle PQC algorithms
+*today* — not as a future roadmap item, but as a profile option that
+operators can enable when their CA and HSM support it.
+
+**Machine identity is the new perimeter.** Zero-trust architectures
+demand that every workload, container, service mesh sidecar, and IoT
+device prove its identity with a certificate. The enrollment server is
+the control point for that identity — it determines who gets a certificate,
+with what constraints, from which CA, and for how long.
+
+Red Hat has been building PKI infrastructure for over two decades through
+Red Hat Certificate System (Dogtag), FreeIPA, and RHEL's identity
+management stack. The problems kipuka, Akamu, and Synta address — protocol
+fragmentation, compliance automation, post-quantum readiness, and
+enrollment at scale — are the same problems our customers are solving
+today.
+
+If you're thinking about what comes next for enterprise PKI, I'd welcome
+the conversation.
+
 ---
 
-kipuka is open source under GPL-3.0-or-later.
+All three projects are open source:
 
-- [Project site](https://kipuka.dev)
-- [Documentation](https://kipuka.dev/doc/)
-- [API reference](https://kipuka.dev/api/)
-- [Source code](https://codeberg.org/czinda/kipuka)
-- [Container image](https://registry.kipuka.dev)
+- **kipuka** (EST/CMP enrollment) — [kipuka.dev](https://kipuka.dev) ·
+  [source](https://codeberg.org/czinda/kipuka) ·
+  [docs](https://kipuka.dev/doc/) ·
+  [container image](https://registry.kipuka.dev)
+- **Akamu** (ACME CA) — [source](https://codeberg.org/czinda/akamu)
+- **Synta** (ASN.1/X.509) — [source](https://codeberg.org/abbra/synta) ·
+  [crates.io](https://crates.io/crates/synta)
