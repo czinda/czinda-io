@@ -104,8 +104,11 @@ graph TD
 
 ## What kipuka is
 
-kipuka is a Rust-based EST server that implements the full
-[RFC 7030](https://www.rfc-editor.org/rfc/rfc7030) enrollment operations:
+kipuka is a Rust-based enrollment server that implements
+[EST (RFC 7030)](https://www.rfc-editor.org/rfc/rfc7030),
+[CMP (RFC 4210)](https://www.rfc-editor.org/rfc/rfc4210), and
+[EST-coaps (RFC 9148)](https://www.rfc-editor.org/rfc/rfc9148). The EST
+operations form the core:
 
 | Operation | Path | Purpose |
 |-----------|------|---------|
@@ -115,6 +118,10 @@ kipuka is a Rust-based EST server that implements the full
 | Full CMC | `POST /fullcmc` | Complex enrollment via RFC 5272 CMC |
 | Server Keygen | `POST /serverkeygen` | Server-side key generation with KRA escrow |
 | CSR Attributes | `GET /csrattrs` | Advertise required CSR fields to clients |
+
+CMP enrollment (initialization, certification, key update, and revocation
+requests) is covered in its own [section below](#cmp-enrollment-rfc-4210).
+CoAP/DTLS transport is detailed [further down](#coapdtls-transport-rfc-7252--rfc-9483).
 
 The name comes from Hawaiian geology. A *kipuka* is an area of older,
 established land surrounded by younger lava flows — an island of stability
@@ -530,6 +537,8 @@ coming:
 - mTLS client certificate authentication with OCSP/CRL revocation checking
 - OCSP stapling with response fetch and cache
 - Server-side key generation with KRA escrow
+- CSR self-signature verification and proof-of-possession (RFC 7030 §4.2)
+- PKCS#7 certs-only encoding for `/cacerts` and STAR responses
 - Remote CA enrollment via EST client delegation
 - CMS-EST security hardening: signer identity binding, RA EKU enforcement, configurable CMC truststore
 - Admin API with mTLS validation, constant-time bearer tokens, and real DB/HSM health probes
