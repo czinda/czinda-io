@@ -2,7 +2,7 @@
 title: "PKI.Next Part 5: One CA, Six Protocols"
 date: 2026-05-12
 draft: false
-tags: ["pki", "est", "acme", "coap", "spiffe", "certificates", "security", "protocols", "pki-next"]
+tags: ["pki", "est", "acme", "coap", "spiffe", "certificates", "security", "protocols", "pki-next", "kipuka", "akamu", "synta"]
 description: "How PKI.Next serves EST, ACME, CoAP, SPIFFE/SPIRE, HashiCorp Vault, and Dogtag compatibility from a single CA using the Registration Authority pattern — and why protocol diversity is the future of PKI."
 series: ["PKI.Next"]
 ---
@@ -141,7 +141,8 @@ sequenceDiagram
 
 EST is the protocol of choice for network equipment (Cisco, Juniper, Arista), MDM-managed devices, and enterprise workstations. It is simpler than CMC (RFC 5272) and better supported than SCEP in modern devices.
 
-PKI.Next's EST server implements:
+PKI.Next's EST server (now released as [kipuka](https://kipuka.dev))
+implements:
 - `/cacerts` --- CA certificate distribution (PKCS#7)
 - `/csrattrs` --- CSR attribute requirements
 - `/simpleenroll` --- Initial enrollment
@@ -153,7 +154,9 @@ Rate limiting is applied at 10 requests per second sustained, 30 burst --- suffi
 
 [ACME (RFC 8555)](https://www.rfc-editor.org/rfc/rfc8555) is the protocol that powers Let's Encrypt. It automates the entire certificate lifecycle: account creation, domain validation, certificate issuance, and renewal.
 
-PKI.Next's ACME server goes beyond basic RFC 8555 with Multi-Perspective Issuance Corroboration (MPIC):
+PKI.Next's ACME server (now released as
+[Akamu](https://codeberg.org/czinda/akamu)) goes beyond basic RFC 8555
+with Multi-Perspective Issuance Corroboration (MPIC):
 
 {{< mermaid >}}
 flowchart TB
@@ -391,6 +394,14 @@ The trend in PKI is clear: certificate consumers are fragmenting. Ten years ago,
 A CA that only supports one protocol forces every consumer to adapt to that protocol. A CA that supports many protocols lets each consumer use the protocol that fits its operational model. The RA pattern makes this tractable: each protocol server is a translation layer between a wire protocol and the CA's API, and the CA does not need to know which protocol originated the request.
 
 ---
+
+**Update (June 2026):** The protocol servers described in this post have been released as independent open-source projects:
+
+- **kipuka** (EST, CMP, and CoAP enrollment) — [kipuka.dev](https://kipuka.dev) · [source](https://codeberg.org/czinda/kipuka)
+- **Akamu** (ACME certificate authority) — [source](https://codeberg.org/czinda/akamu)
+- **Synta** (ASN.1/X.509 foundation for both) — [source](https://codeberg.org/abbra/synta) · [crates.io](https://crates.io/crates/synta)
+
+See the [kipuka blog post](/posts/kipuka-est-server-and-infrastructure/) for the full architecture of the EST/CMP/CoAP server.
 
 *Next in the series: [Part 6: Replacing Dogtag PKI](/posts/pki-next-part6-replacing-dogtag/) --- the migration path from twenty years of Java-based PKI to a Rust-based replacement, and what Dogtag teaches us about building for the next twenty years.*
 

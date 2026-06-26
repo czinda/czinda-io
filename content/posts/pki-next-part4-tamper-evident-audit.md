@@ -2,7 +2,7 @@
 title: "PKI.Next Part 4: Tamper-Evident Audit Logs"
 date: 2026-05-09
 draft: false
-tags: ["pki", "audit", "security", "common-criteria", "hmac", "tamper-detection", "pki-next"]
+tags: ["pki", "audit", "security", "common-criteria", "hmac", "tamper-detection", "pki-next", "kipuka"]
 description: "How PKI.Next implements HMAC hash-chained audit logs for Common Criteria FAU_STG.2 compliance, the timestamp precision bug that silently broke chain verification, and why audit integrity is the hardest part of running a CA."
 series: ["PKI.Next"]
 ---
@@ -378,6 +378,8 @@ Legitimate chain breaks occur when:
 The verification endpoint reports the first mismatch, allowing operators to distinguish between a chain break at a known operational boundary (expected) and a chain break in the middle of normal operations (suspicious).
 
 ---
+
+**Update (June 2026):** The audit logging pattern described here is also implemented in [kipuka](https://kipuka.dev), the EST/CMP enrollment server, with NIAP FAU_GEN.1-compliant structured audit trails. See the [kipuka blog post](/posts/kipuka-est-server-and-infrastructure/) for details. Source: [codeberg.org/czinda/kipuka](https://codeberg.org/czinda/kipuka)
 
 *Next in the series: [Part 5: One CA, Six Protocols](/posts/pki-next-part5-protocol-servers/) --- how the Registration Authority pattern lets a single CA serve EST, ACME, CoAP, SPIFFE, Vault, and Dogtag simultaneously.*
 

@@ -2,7 +2,7 @@
 title: "Replacing Six ASN.1 Crates with One: Migrating to Synta"
 date: 2026-05-19
 draft: false
-tags: ["rust", "asn1", "x509", "synta", "pki", "cryptography", "migration", "zero-copy"]
+tags: ["rust", "asn1", "x509", "synta", "pki", "cryptography", "migration", "zero-copy", "kipuka", "akamu"]
 description: "How PKI.Next replaced six competing ASN.1/X.509 Rust crates with synta — a schema-generated, zero-copy library — in a single migration that touched 34 files, deleted 1,726 lines, and made certificate parsing 3x faster."
 ---
 
@@ -326,5 +326,11 @@ If you are happy with `x509-cert` and `der` and do not have performance requirem
 The concrete lesson from this migration is that ASN.1 libraries in Rust are not interchangeable components. Each one makes different trade-offs around allocation, error handling, and schema coverage. Choosing the right one early saves a migration later. And if you are building a CA, zero-copy parsing is not a premature optimization — it is the foundation that every other performance decision rests on.
 
 ---
+
+**Update (June 2026):** Synta is the ASN.1/X.509 foundation for two enrollment servers:
+
+- **Synta** — [source](https://codeberg.org/abbra/synta) · [crates.io](https://crates.io/crates/synta)
+- **kipuka** (EST/CMP/CoAP enrollment, built on Synta) — [kipuka.dev](https://kipuka.dev) · [source](https://codeberg.org/czinda/kipuka)
+- **Akamu** (ACME CA, built on Synta) — [source](https://codeberg.org/czinda/akamu)
 
 *If you are interested in the CA that uses synta, the [PKI.Next series](/posts/pki-next-part1-building-ca-in-rust/) covers the full architecture — from the [Rust crate structure](/posts/pki-next-part1-building-ca-in-rust/) to [post-quantum certificates](/posts/pki-next-part2-post-quantum-certificates/) to [FIPS 140-3 crypto pluggability](/posts/pki-next-part3-fips-and-hsm/).*

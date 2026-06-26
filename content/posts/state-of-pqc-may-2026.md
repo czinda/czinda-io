@@ -2,7 +2,7 @@
 title: "The State of Post-Quantum Cryptography: May 2026"
 date: 2026-05-26
 draft: false
-tags: ["post-quantum", "pqc", "ml-kem", "ml-dsa", "tls", "ssh", "pki", "fips", "cryptography"]
+tags: ["post-quantum", "pqc", "ml-kem", "ml-dsa", "tls", "ssh", "pki", "fips", "cryptography", "kipuka", "akamu", "synta"]
 description: "A practitioner's scorecard for post-quantum cryptography adoption across TLS, SSH, and PKI — what works today, what's close, and what's still blocked."
 ---
 
@@ -215,5 +215,7 @@ NIST's April 2026 update to the [FIPS 140-3 Implementation Guidance](https://csr
 3. Watch the PLANTS working group. MTCs are the most likely path to practical post-quantum TLS authentication at scale.
 
 ---
+
+**Update (June 2026):** The PQC capabilities discussed in this scorecard — ML-DSA certificate issuance, PKCS#11 HSM support, and Merkle Tree Certificates — are implemented in [kipuka](https://kipuka.dev) (EST/CMP enrollment, [source](https://codeberg.org/czinda/kipuka)), [Akamu](https://codeberg.org/czinda/akamu) (ACME CA), and [Synta](https://codeberg.org/abbra/synta) (ASN.1/X.509 foundation, [crates.io](https://crates.io/crates/synta)).
 
 *This is the first installment of a periodic series tracking post-quantum cryptography adoption. For implementation details --- signing ML-DSA certificates, handling FIPS constraints, managing ASN.1 encoding --- see the [PKI.Next series](/posts/pki-next-part1-building-ca-in-rust/).*

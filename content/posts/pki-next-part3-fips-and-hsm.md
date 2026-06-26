@@ -2,7 +2,7 @@
 title: "PKI.Next Part 3: FIPS 140-3 and the Crypto Pluggability Problem"
 date: 2026-05-07
 draft: false
-tags: ["pki", "fips", "hsm", "pkcs11", "rust", "cryptography", "security", "pki-next"]
+tags: ["pki", "fips", "hsm", "pkcs11", "rust", "cryptography", "security", "pki-next", "kipuka", "akamu"]
 description: "How PKI.Next uses Rust feature flags and trait objects to support three cryptographic backends — ring, aws-lc-rs (FIPS 140-3), and PKCS#11 hardware — without a single if-else in the certificate issuance path."
 series: ["PKI.Next"]
 ---
@@ -364,6 +364,12 @@ PKI.Next's approach --- compile-time backend selection, trait-based abstraction,
 The trade-off is build complexity: CI runs three build configurations (`default`, `--features fips`, `--features pkcs11`) and three corresponding test suites. But that complexity lives in CI, where it belongs, not in production deployment where it would be dangerous.
 
 ---
+
+**Update (June 2026):** The crypto pluggability pattern and PKCS#11 integration described here are implemented in:
+
+- **kipuka** (EST/CMP enrollment with HSM key protection) — [kipuka.dev](https://kipuka.dev) · [source](https://codeberg.org/czinda/kipuka)
+- **Akamu** (ACME CA with HSM CA keys) — [source](https://codeberg.org/czinda/akamu)
+- **Synta** (ASN.1/X.509 foundation) — [source](https://codeberg.org/abbra/synta) · [crates.io](https://crates.io/crates/synta)
 
 *Next in the series: [Part 4: Tamper-Evident Audit Logs](/posts/pki-next-part4-tamper-evident-audit/) --- HMAC hash chaining for Common Criteria compliance, and the timestamp precision bug that almost broke it.*
 

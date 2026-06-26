@@ -2,7 +2,7 @@
 title: "PKI.Next Part 2: Post-Quantum Certificates Are Here"
 date: 2026-05-01
 draft: false
-tags: ["pki", "post-quantum", "ml-dsa", "fips-204", "certificates", "security", "cryptography", "pki-next", "merkle-tree-certificates", "mtc"]
+tags: ["pki", "post-quantum", "ml-dsa", "fips-204", "certificates", "security", "cryptography", "pki-next", "merkle-tree-certificates", "mtc", "synta"]
 description: "How PKI.Next implements ML-DSA (FIPS 204) post-quantum signatures today, why Merkle Tree Certificates are the future of PQC-era TLS authentication, and the engineering decisions behind dual-mode PQC support."
 series: ["PKI.Next"]
 ---
@@ -339,6 +339,12 @@ For CA developers, the takeaway is this: MTC is not an incremental change to cer
 The concrete takeaway: if you are building or operating a CA today, the time to add PQC support is now, even if you are not issuing PQC certificates in production yet. The engineering work --- algorithm abstraction, key format handling, size-aware protocol design, and now Merkle tree certificate infrastructure --- is substantial, and doing it under time pressure when quantum computers arrive is not a plan.
 
 ---
+
+**Update (June 2026):** The post-quantum certificate support described here is implemented in three open-source projects:
+
+- **Synta** (certificate builder and OID handling) — [source](https://codeberg.org/abbra/synta) · [crates.io](https://crates.io/crates/synta)
+- **kipuka** (EST/CMP enrollment with PQC profiles) — [kipuka.dev](https://kipuka.dev) · [source](https://codeberg.org/czinda/kipuka)
+- **Akamu** (ACME CA with PQC account keys) — [source](https://codeberg.org/czinda/akamu)
 
 *Next in the series: [Part 3: FIPS 140-3 and the Crypto Pluggability Problem](/posts/pki-next-part3-fips-and-hsm/) --- how Rust's feature flags and trait objects let you swap cryptographic backends without touching business logic.*
 

@@ -2,7 +2,7 @@
 title: "PKI.Next Part 1: Building a Certificate Authority in Rust"
 date: 2026-04-29
 draft: false
-tags: ["pki", "rust", "certificates", "security", "architecture", "ca", "pki-next"]
+tags: ["pki", "rust", "certificates", "security", "architecture", "ca", "pki-next", "kipuka", "akamu", "synta"]
 description: "Why we chose Rust to build a modern Certificate Authority from scratch, the modular crate architecture that makes it work, and what 55,000 lines of Rust buys you that Java and C never could."
 series: ["PKI.Next"]
 ---
@@ -270,5 +270,11 @@ The rest of this series digs into specific features:
 Each post includes architecture diagrams, configuration examples, and the specific implementation decisions that make a Certificate Authority trustworthy.
 
 ---
+
+**Update (June 2026):** The protocol servers described in this series have since been released as independent open-source projects:
+
+- **kipuka** (EST/CMP/CoAP enrollment) — [kipuka.dev](https://kipuka.dev) · [source](https://codeberg.org/czinda/kipuka)
+- **Akamu** (ACME CA) — [source](https://codeberg.org/czinda/akamu)
+- **Synta** (ASN.1/X.509 foundation) — [source](https://codeberg.org/abbra/synta) · [crates.io](https://crates.io/crates/synta)
 
 *The previous posts on this blog cover [OCSP vs CRL sharding performance](/posts/ocsp-vs-crl-sharding-performance/) and [event-driven certificate lifecycle management](/posts/event-driven-certificate-revocation-lab/).*

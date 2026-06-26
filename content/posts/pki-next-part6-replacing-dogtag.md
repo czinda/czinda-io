@@ -2,7 +2,7 @@
 title: "PKI.Next Part 6: Replacing Dogtag PKI"
 date: 2026-05-14
 draft: false
-tags: ["pki", "dogtag", "freeipa", "migration", "rust", "java", "security", "pki-next"]
+tags: ["pki", "dogtag", "freeipa", "migration", "rust", "java", "security", "pki-next", "kipuka", "akamu", "synta"]
 description: "What twenty years of operating Dogtag PKI taught us about building its replacement, the compatibility proxy that makes migration possible, and the architectural bets that will define the next twenty years of certificate management."
 series: ["PKI.Next"]
 ---
@@ -260,6 +260,12 @@ This series covered the major features and design decisions in PKI.Next:
 Together, they describe a CA built to handle the requirements of the next decade: post-quantum algorithms, Merkle Tree Certificates for PQC-era TLS efficiency, container-native deployment, protocol diversity, and compliance-grade audit trails --- while maintaining backward compatibility with the infrastructure of the last decade.
 
 ---
+
+**Update (June 2026):** The PKI stack described in this series is now available as open-source projects:
+
+- **kipuka** (EST/CMP enrollment with Dogtag CA integration) — [kipuka.dev](https://kipuka.dev) · [source](https://codeberg.org/czinda/kipuka)
+- **Akamu** (ACME CA) — [source](https://codeberg.org/czinda/akamu)
+- **Synta** (ASN.1/X.509 foundation) — [source](https://codeberg.org/abbra/synta) · [crates.io](https://crates.io/crates/synta)
 
 *If you are interested in the project or have questions about the architecture, feel free to reach out.*
 
