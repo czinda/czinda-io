@@ -2,8 +2,8 @@
 title: "kipuka: An EST Enrollment Server Built for Enterprise PKI"
 date: 2026-06-25
 draft: false
-tags: ["pki", "est", "rust", "certificates", "security", "hsm", "enterprise", "kipuka", "rfc-7030"]
-description: "Enterprise certificate enrollment shouldn't require a monolithic CA. kipuka is a Rust-based EST server with multi-CA failover, HSM key protection, and NIAP compliance — designed to fit into the PKI you already have."
+tags: ["pki", "est", "rust", "certificates", "security", "hsm", "enterprise", "kipuka", "rfc-7030", "coap", "post-quantum", "cmp"]
+description: "Enterprise certificate enrollment shouldn't require a monolithic CA. kipuka is a Rust-based EST server with multi-CA failover, HSM key protection, NIAP compliance, CoAP/DTLS for constrained devices, CMP enrollment, and post-quantum readiness — designed to fit into the PKI you already have."
 series: ["PKI.Next"]
 ---
 
@@ -55,9 +55,56 @@ only talk to one CA vendor, you're locked in.
 kipuka addresses these by providing a dedicated EST enrollment layer that
 sits in front of your existing CA infrastructure.
 
+## What kipuka enrolls
+
+kipuka is protocol-native for the device types that enterprise and
+government environments actually need to manage:
+
+| Device / Workload | Transport | Auth Method | Example |
+|-------------------|-----------|-------------|---------|
+| **Servers and VMs** | EST/HTTPS | OTP or mTLS | Apache, Nginx, RHEL hosts |
+| **Containers and pods** | EST/HTTPS | mTLS auto-renewal | Kubernetes workloads, OpenShift routes |
+| **Network equipment** | EST/HTTPS | OTP (replacing SCEP) | Cisco IOS-XE, Juniper, Aruba |
+| **Workstations and laptops** | EST/HTTPS | GSSAPI/Kerberos | Domain-joined Windows, RHEL, macOS |
+| **Mobile devices** | EST/HTTPS | OTP | iOS, Android MDM enrollment |
+| **IoT sensors and gateways** | EST/CoAP/DTLS | mTLS or OTP | Constrained ARM/RISC-V devices |
+| **Industrial controllers** | CMP (RFC 4210) | MAC or signature | SCADA, PLC, DCS systems |
+| **Telecom equipment** | CMP (RFC 4210) | MAC or signature | 5G RAN, core network functions |
+| **Load balancers and proxies** | EST/HTTPS | mTLS renewal | F5, HAProxy, Envoy sidecars |
+| **HSM-backed services** | EST/HTTPS | mTLS | Payment processing, key management |
+
+The three transport options — HTTPS, CoAP/DTLS, and CMP — cover
+everything from a Kubernetes sidecar requesting a 47-day TLS cert to
+an embedded sensor on a constrained network enrolling over UDP. EST labels
+route each device type to the right certificate profile, CA backend, and
+key constraints without per-device configuration on the enrollment server.
+
+{{< mermaid >}}
+graph TD
+    subgraph HTTPS["HTTPS Clients"]
+        A1["Servers / VMs"]
+        A2["Containers / Pods"]
+        A3["Network Equipment"]
+        A4["Workstations"]
+        A5["Mobile Devices"]
+        A6["Load Balancers"]
+    end
+    subgraph COAP["Constrained Devices"]
+        B1["IoT Sensors"]
+        B2["Gateways"]
+        B3["Embedded Controllers"]
+    end
+    HTTPS -->|"TLS + OTP / mTLS / Kerberos"| EST["kipuka-est<br/>EST + CMP routes"]
+    COAP -->|"DTLS 1.2 over UDP"| CoAP["kipuka-coap<br/>Block1/2, EST bridge"]
+    EST --> Core["Shared Enrollment Core"]
+    CoAP --> Core
+    Core --> Local["Local CAs<br/>(file or HSM)"]
+    Core --> Remote["Remote CAs<br/>(Dogtag, EST)"]
+{{< /mermaid >}}
+
 ## What kipuka is
 
-kipuka is a Rust-based EST server that implements the core
+kipuka is a Rust-based EST server that implements the full
 [RFC 7030](https://www.rfc-editor.org/rfc/rfc7030) enrollment operations:
 
 | Operation | Path | Purpose |
@@ -66,9 +113,8 @@ kipuka is a Rust-based EST server that implements the core
 | Simple Enroll | `POST /simpleenroll` | Initial certificate enrollment |
 | Simple Re-enroll | `POST /simplereenroll` | Certificate renewal with mTLS |
 | Full CMC | `POST /fullcmc` | Complex enrollment via RFC 5272 CMC |
-
-Server-side key generation (`/serverkeygen`) and CSR attribute advertisement
-(`/csrattrs`) are in active development.
+| Server Keygen | `POST /serverkeygen` | Server-side key generation with KRA escrow |
+| CSR Attributes | `GET /csrattrs` | Advertise required CSR fields to clients |
 
 The name comes from Hawaiian geology. A *kipuka* is an area of older,
 established land surrounded by younger lava flows — an island of stability
@@ -188,9 +234,127 @@ existing certificate during the TLS handshake. kipuka validates the
 certificate chain against configured trust anchors and allows re-enrollment
 without additional credentials.
 
-**GSSAPI/Kerberos** — for enterprise SSO environments. Protocol structure is
-in place (SPNEGO, channel binding, principal mapping); FFI integration with
-libgssapi is planned.
+**GSSAPI/Kerberos** — for enterprise SSO environments. SPNEGO token parsing
+extracts Kerberos principals from AP-REQ tickets for identity mapping. With
+the optional `gssapi` feature flag, kipuka links against libgssapi for full
+cryptographic ticket verification via `gss_accept_sec_context`. Credential
+initialization from a keytab happens at startup, and mutual authentication
+tokens are supported. A `require_crypto_verification` config option controls
+whether structural parsing (faster, no krb5 dependency) or full
+cryptographic verification (production-recommended) is used.
+
+### CMP enrollment (RFC 4210)
+
+Beyond EST, kipuka implements the
+[Certificate Management Protocol](https://www.rfc-editor.org/rfc/rfc4210)
+for environments that need it. CMP is the protocol of choice for many
+telecom and industrial PKI deployments, and it's required by some European
+eIDAS trust service providers.
+
+kipuka's CMP implementation includes:
+
+- **Signature-based protection** — verify CMP message signatures over
+  `header||body` using signer certificates from `extraCerts`, with chain
+  validation against configured CA trust anchors
+- **MAC-based protection** — shared secret authentication per RFC 4210
+  §5.1.3.1 with PBKDF2 key derivation (iterated OWF with SHA-256/384/512,
+  capped at 100k iterations) and HMAC with constant-time comparison
+- **RA authorization** — certificates with the `id-kp-cmcRA` extended key
+  usage can perform revocation on behalf of any entity
+- **Dynamic CA parameters** — CMP responses use the actual CA subject DN
+  and signature algorithm rather than hardcoded values
+
+### CoAP/DTLS transport (RFC 7252 / RFC 9483)
+
+Not every enrollment client speaks HTTPS.
+[EST-coaps](https://www.rfc-editor.org/rfc/rfc9148) defines certificate
+enrollment over CoAP/DTLS for constrained devices — IoT sensors, embedded
+controllers, and network equipment that can't afford a full TLS stack.
+
+kipuka includes a complete CoAP/DTLS transport layer:
+
+{{< mermaid >}}
+graph TD
+    Device["Constrained Device<br/>(sensor, controller, gateway)"]
+    Device -->|"DTLS 1.2 over UDP"| CoAP
+    subgraph CoAP["kipuka-coap"]
+        Block1["Block1 assembly<br/>reassemble multi-block CSR uploads"]
+        Block2["Block2 split<br/>fragment large cert responses"]
+        Bridge["EST route bridge<br/>/cacerts, /simpleenroll, /simplereenroll"]
+    end
+    CoAP -->|"same issuance, audit, and<br/>compliance logic as HTTPS"| Core["Shared EST Core"]
+{{< /mermaid >}}
+
+The DTLS transport uses OpenSSL for the handshake, with per-peer
+`DtlsConnection` state, memory BIO architecture, client certificate
+extraction, and session resumption caching. Block1 assembly handles
+multi-block CSR uploads with configurable TTL and capacity limits. Block2
+disassembly fragments large certificate responses automatically.
+
+The CoAP server shares `AppState` with the HTTPS server — enabling it
+requires a single `[coap]` section in the configuration. All EST operations
+route through the same issuance, audit, and compliance logic.
+
+### Post-quantum cryptography (FIPS 203 / FIPS 204)
+
+kipuka supports post-quantum certificate enrollment today:
+
+**ML-DSA (FIPS 204)** — CSR validation recognizes ML-DSA algorithm OIDs.
+EST labels can constrain enrollment to specific ML-DSA security levels via
+`allowed_ml_dsa_levels`. ML-DSA CAs are auto-detected and configured with
+`hash_algorithm="none"` because the hash is built into the algorithm per
+the FIPS 204 specification — there is no separate SHA parameter.
+
+**ML-KEM (FIPS 203)** — key encapsulation mechanism support for hybrid
+key exchange scenarios. Profile enforcement validates CSR algorithms against
+`allowed_ml_kem_levels`.
+
+**Composite signatures** — `allow_composite_ml_dsa` enables profiles that
+combine ML-DSA with a classical algorithm for defense-in-depth during the
+transition period.
+
+**HSM support** — the cryptoki upgrade to v0.12 (PKCS#11 v3.2) enables
+ML-DSA key generation (`MlDsaKeyPairGen`), ML-DSA signing
+(`Mechanism::MlDsa` with `HedgeType::Preferred`), ML-KEM key pair
+generation (`MlKemKeyPairGen`), and ML-KEM encapsulate/decapsulate — all
+through standard PKCS#11 v3.2 mechanism IDs rather than vendor-specific
+values.
+
+Software key generation via synta-certificate works without an HSM.
+Runtime requires OpenSSL 3.5+ with the PQC provider.
+
+### STAR short-lived certificates (RFC 8739)
+
+[STAR](https://www.rfc-editor.org/rfc/rfc8739) (Short-Term Automatic
+Renewal) certificates solve the revocation latency problem. Instead of
+issuing long-lived certificates and relying on CRL/OCSP for revocation, STAR
+issues certificates with very short validity periods and automatically
+renews them. If the STAR order is cancelled, the certificate simply expires
+without needing a revocation check.
+
+kipuka's STAR implementation issues real certificates via the standard
+`issue_certificate()` path with clamped validity, wraps responses in
+PKCS#7 certs-only format, and tracks order state through the full lifecycle.
+
+### CMS-EST security hardening (RFC 5652)
+
+The CMS (Cryptographic Message Syntax) layer that wraps Full CMC requests
+received significant security hardening:
+
+- **SignedData verification** — signature verification now operates over
+  re-tagged `signedAttrs` DER (`SET OF` tag `0x31`) per RFC 5652 §5.4,
+  rather than the raw payload
+- **Signer identification** — signer certificate is matched against the
+  `SignerIdentifier` (sid) instead of blindly using the first certificate
+  in `CertificateSet`
+- **Subject identity binding** — simplereenroll via CMS compares the CSR
+  subject with the CMS signer identity to prevent enrollment impersonation
+- **RA EKU enforcement** — Full CMC requests require the `id-kp-cmcRA`
+  extended key usage on the signer certificate
+- **Configurable CMC truststore** — a dedicated `cmc_truststore_file`
+  option allows RA certificates issued by a different CA or intermediate
+  to sign CMC requests, rather than requiring the target CA cert as the
+  sole trust anchor
 
 ### Compliance mapping
 
@@ -218,34 +382,22 @@ The full compliance mapping is in the
 kipuka is written in Rust, chosen for memory safety in a security-critical
 service that handles private keys and cryptographic operations.
 
-The architecture is a Cargo workspace with six crates:
+The architecture is a Cargo workspace with seven crates, organized in
+layers:
 
-```
-                      Clients
-                        |
-                   TLS + mTLS/OTP
-                        |
-                +-------+-------+
-                |   kipuka-est  |     axum routes, EST protocol
-                +---+---+---+---+
-                    |   |   |
-          +---------+   |   +---------+
-          |             |             |
-     kipuka-otp    kipuka-hsm    kipuka-util
-     OTP lifecycle  PKCS#11      shared types
-                    HSM ops         & config
-          |             |
-          |        kipuka-dogtag
-          |         Dogtag PKI
-          |         REST client
-          |
-     +----+----+       kipuka-coap
-     |   sqlx  |       CoAP transport
-     | sqlite  |       (planned)
-     | postgres|
-     | mariadb |
-     +---------+
-```
+{{< mermaid >}}
+graph TD
+    Clients["Clients"]
+    Clients -->|"HTTPS (TLS)"| EST["kipuka-est<br/>axum routes, EST + CMP"]
+    Clients -->|"CoAP (DTLS)"| CoAP["kipuka-coap<br/>DTLS transport, Block1/Block2"]
+    EST --> Core["Shared Enrollment Core"]
+    CoAP --> Core
+    Core --> OTP["kipuka-otp<br/>OTP store, rate limit"]
+    Core --> HSM["kipuka-hsm<br/>PKCS#11, HSM crypto"]
+    Core --> Dogtag["kipuka-dogtag<br/>Dogtag CA REST client"]
+    Core --> Util["kipuka-util<br/>shared types & config"]
+    OTP --> DB["sqlx<br/>SQLite · PostgreSQL · MariaDB"]
+{{< /mermaid >}}
 
 Each crate has a clear responsibility boundary. `kipuka-est` handles EST
 protocol routing and certificate issuance. `kipuka-hsm` abstracts PKCS#11
@@ -328,30 +480,32 @@ kipuka is under active development. Here's what works today and what's
 coming:
 
 **Implemented:**
-- Certificate enrollment and renewal (simpleenroll, simplereenroll)
-- Full CMC enrollment (RFC 5272)
-- STAR short-term auto-renewal state machine (RFC 8739)
-- Multi-CA with four HA failover strategies
-- PKCS#11 HSM integration (Entrust, Utimaco, Thales, Kryoptic)
+- Full EST protocol: simpleenroll, simplereenroll, fullcmc, serverkeygen, csrattrs, cacerts
+- CMP enrollment with signature and MAC-based protection (RFC 4210)
+- CMS SignedData verification with signedAttrs re-tagging (RFC 5652 §5.4)
+- STAR short-term auto-renewal with real certificate issuance (RFC 8739)
+- CoAP/DTLS transport for constrained devices (RFC 7252 / RFC 9483)
+- Post-quantum cryptography: ML-DSA (FIPS 204), ML-KEM (FIPS 203), composite signatures
+- GSSAPI/Kerberos authentication with libgssapi FFI and keytab support
+- Multi-CA with four HA failover strategies and queue-and-retry
+- PKCS#11 v3.2 HSM integration (Entrust, Utimaco, Thales, Kryoptic) with PQC mechanisms
 - Dogtag PKI REST client with multi-instance pooling
 - OTP authentication with timing-safe validation and rate limiting
-- mTLS client certificate authentication
+- mTLS client certificate authentication with OCSP/CRL revocation checking
+- OCSP stapling with response fetch and cache
+- Server-side key generation with KRA escrow
+- Remote CA enrollment via EST client delegation
+- CMS-EST security hardening: signer identity binding, RA EKU enforcement, configurable CMC truststore
+- Admin API with mTLS validation, constant-time bearer tokens, and real DB/HSM health probes
 - SQLite, PostgreSQL, and MariaDB backends
-- NIAP-compliant structured audit logging
-- Admin API for OTP provisioning and CA management
+- NIAP-compliant structured audit logging (21 event types)
 - PatternFly web dashboard
-
-**In progress:**
-- Server-side key generation (`/serverkeygen`) with KRA integration
-- PKCS#7 SignedData encoding for `/cacerts` responses
-- CSR self-signature verification and proof-of-possession linking
-- GSSAPI/Kerberos authentication via libgssapi FFI
+- FreeIPA integration test suite (Beaker topology with 10 GSSAPI smoke tests)
 
 **Planned:**
-- OCSP responder
-- CoAP transport for constrained devices (RFC 7252)
-- Post-quantum signing (ML-DSA via FIPS 204)
+- Full OCSP responder
 - Certificate transparency log submission
+- CMP polling and delayed enrollment
 
 The container image is available at
 `registry.kipuka.dev/kipuka:latest` (x86_64 and arm64) with anonymous
